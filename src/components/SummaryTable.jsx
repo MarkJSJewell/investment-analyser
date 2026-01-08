@@ -75,6 +75,20 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
           valueA = ratingOrder[analystA?.recommendation] || 0;
           valueB = ratingOrder[analystB?.recommendation] || 0;
           break;
+        case 'fmv':
+          valueA = analystA?.fmvEstimate || 0;
+          valueB = analystB?.fmvEstimate || 0;
+          break;
+        case 'fmvUpside':
+          valueA = analystA?.fmvEstimate && analystA?.currentPrice 
+            ? ((analystA.fmvEstimate - analystA.currentPrice) / analystA.currentPrice * 100) : -999;
+          valueB = analystB?.fmvEstimate && analystB?.currentPrice 
+            ? ((analystB.fmvEstimate - analystB.currentPrice) / analystB.currentPrice * 100) : -999;
+          break;
+        case 'earnings':
+          valueA = analystA?.earningsDate ? new Date(analystA.earningsDate).getTime() : 9999999999999;
+          valueB = analystB?.earningsDate ? new Date(analystB.earningsDate).getTime() : 9999999999999;
+          break;
         default:
           valueA = dataA.returnPercent;
           valueB = dataB.returnPercent;
@@ -167,6 +181,9 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
               <SortHeader column="return">Return</SortHeader>
               <SortHeader column="target">Target</SortHeader>
               <SortHeader column="upside">Upside</SortHeader>
+              <SortHeader column="fmv">FMV</SortHeader>
+              <SortHeader column="fmvUpside">FMV Δ</SortHeader>
+              <SortHeader column="earnings">Earnings</SortHeader>
               <th style={{ textAlign: 'center', padding: '10px 12px', color: '#666', fontWeight: '500', fontSize: '12px' }}>Rating</th>
             </tr>
           </thead>
@@ -178,6 +195,21 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
               const upside = analyst?.targetMean && analyst?.currentPrice 
                 ? ((analyst.targetMean - analyst.currentPrice) / analyst.currentPrice * 100) 
                 : null;
+              const fmvUpside = analyst?.fmvEstimate && analyst?.currentPrice 
+                ? ((analyst.fmvEstimate - analyst.currentPrice) / analyst.currentPrice * 100) 
+                : null;
+              
+              // Format earnings date
+              const formatEarningsDate = (dateStr) => {
+                if (!dateStr) return null;
+                const date = new Date(dateStr);
+                const today = new Date();
+                const diffDays = Math.ceil((date - today) / (1000 * 60 * 60 * 24));
+                const formatted = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+                return { formatted, diffDays, isPast: diffDays < 0 };
+              };
+              
+              const earnings = formatEarningsDate(analyst?.earningsDate);
               
               return (
                 <tr key={symbol} style={{ borderBottom: '1px solid #eee' }}>
@@ -226,6 +258,36 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
                       </span>
                     ) : '-'}
                   </td>
+                  <td style={{ textAlign: 'right', padding: '10px 12px' }}>
+                    {analyst?.fmvEstimate ? (
+                      <span title={analyst.fmvMethod ? `Method: ${analyst.fmvMethod}` : ''} style={{ color: '#666', cursor: analyst.fmvMethod ? 'help' : 'default' }}>
+                        ${analyst.fmvEstimate.toFixed(2)}
+                      </span>
+                    ) : '-'}
+                  </td>
+                  <td style={{ textAlign: 'right', padding: '10px 12px' }}>
+                    {fmvUpside !== null ? (
+                      <span style={{ 
+                        color: fmvUpside >= 0 ? '#2E7D32' : '#C62828',
+                        fontWeight: '500'
+                      }}>
+                        {fmvUpside >= 0 ? '+' : ''}{fmvUpside.toFixed(1)}%
+                      </span>
+                    ) : '-'}
+                  </td>
+                  <td style={{ textAlign: 'right', padding: '10px 12px' }}>
+                    {earnings ? (
+                      <span style={{ 
+                        fontSize: '11px',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        background: earnings.isPast ? '#f5f5f5' : (earnings.diffDays <= 14 ? '#FFF3E0' : '#E3F2FD'),
+                        color: earnings.isPast ? '#999' : (earnings.diffDays <= 14 ? '#E65100' : '#1565C0')
+                      }} title={earnings.diffDays >= 0 ? `In ${earnings.diffDays} days` : 'Past'}>
+                        {earnings.formatted}
+                      </span>
+                    ) : '-'}
+                  </td>
                   <td style={{ padding: '10px 12px' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                       {renderAnalystBar(analyst)}
@@ -271,6 +333,9 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
                   {formatPercent(totalReturn)}
                 </span>
               </td>
+              <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
+              <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
+              <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
               <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
               <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
               <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>

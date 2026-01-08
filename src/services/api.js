@@ -139,7 +139,7 @@ export const fetchHistoricalData = async (symbol, start, end) => {
 
 // Fetch analyst and market data
 export const fetchAnalystData = async (symbol) => {
-  const yahooUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price`;
+  const yahooUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics`;
   
   for (const proxyFn of CORS_PROXIES) {
     try {
@@ -157,6 +157,40 @@ export const fetchAnalystData = async (symbol) => {
         const financial = result.financialData;
         const summary = result.summaryDetail;
         const price = result.price;
+        const calendar = result.calendarEvents;
+        const keyStats = result.defaultKeyStatistics;
+        
+        // Get next earnings date
+        const earningsDate = calendar?.earnings?.earningsDate?.[0]?.raw;
+        
+        // Calculate Fair Market Value estimates
+        const currentPrice = financial?.currentPrice?.raw || price?.regularMarketPrice?.raw;
+        const bookValue = keyStats?.bookValue?.raw;
+        const priceToBook = keyStats?.priceToBook?.raw;
+        const forwardPE = summary?.forwardPE?.raw || keyStats?.forwardPE?.raw;
+        const forwardEps = keyStats?.forwardEps?.raw;
+        const pegRatio = keyStats?.pegRatio?.raw;
+        
+        // FMV calculation methods
+        let fmvEstimate = null;
+        let fmvMethod = null;
+        
+        // Method 1: Target Mean from analysts (most reliable)
+        if (financial?.targetMeanPrice?.raw) {
+          fmvEstimate = financial.targetMeanPrice.raw;
+          fmvMethod = 'Analyst Target';
+        }
+        // Method 2: Forward PE * Forward EPS
+        else if (forwardPE && forwardEps && forwardPE > 0 && forwardPE < 100) {
+          fmvEstimate = forwardPE * forwardEps;
+          fmvMethod = 'Forward PE';
+        }
+        // Method 3: Book Value * reasonable P/B multiple
+        else if (bookValue && bookValue > 0) {
+          const reasonablePB = Math.min(priceToBook || 2, 5);
+          fmvEstimate = bookValue * reasonablePB;
+          fmvMethod = 'Book Value';
+        }
         
         return {
           strongBuy: trend?.strongBuy || 0,
@@ -167,7 +201,7 @@ export const fetchAnalystData = async (symbol) => {
           targetHigh: financial?.targetHighPrice?.raw,
           targetLow: financial?.targetLowPrice?.raw,
           targetMean: financial?.targetMeanPrice?.raw,
-          currentPrice: financial?.currentPrice?.raw || price?.regularMarketPrice?.raw,
+          currentPrice,
           recommendation: financial?.recommendationKey,
           name: price?.shortName || price?.longName,
           currency: price?.currency,
@@ -178,11 +212,23 @@ export const fetchAnalystData = async (symbol) => {
           fiftyDayAverage: summary?.fiftyDayAverage?.raw,
           twoHundredDayAverage: summary?.twoHundredDayAverage?.raw,
           trailingPE: summary?.trailingPE?.raw,
-          forwardPE: summary?.forwardPE?.raw,
+          forwardPE: forwardPE,
           dividendYield: summary?.dividendYield?.raw,
           beta: summary?.beta?.raw,
           volume: summary?.averageVolume?.raw,
-          quoteType: price?.quoteType
+          quoteType: price?.quoteType,
+          // New fields
+          earningsDate: earningsDate ? new Date(earningsDate * 1000).toISOString().split('T')[0] : null,
+          bookValue,
+          priceToBook,
+          forwardEps,
+          pegRatio,
+          fmvEstimate,
+          fmvMethod,
+          enterpriseValue: keyStats?.enterpriseValue?.raw,
+          profitMargins: keyStats?.profitMargins?.raw,
+          revenueGrowth: financial?.revenueGrowth?.raw,
+          earningsGrowth: financial?.earningsGrowth?.raw
         };
       }
     } catch (e) {
