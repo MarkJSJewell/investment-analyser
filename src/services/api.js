@@ -1,7 +1,8 @@
-// CORS proxies to try
+// CORS proxies to try - Priority changed to avoid blocked corsproxy.io
 const CORS_PROXIES = [
-  (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
+  (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
 ];
 
@@ -19,10 +20,12 @@ export const fetchQuote = async (symbol) => {
     return { valid: false, error: 'Invalid format. Use ticker symbols like AAPL, MSFT, NVDA' };
   }
   
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`;
+  // Use query2 and v8 for better reliability
+  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`;
   
   try {
-    const response = await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`);
+    // Try primary proxy first
+    const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
     if (response.ok) {
       const text = await response.text();
       if (text.trim().startsWith('{')) {
@@ -50,7 +53,8 @@ export const fetchHistoricalData = async (symbol, start, end) => {
   const startTimestamp = Math.floor(new Date(start).getTime() / 1000);
   const endTimestamp = Math.floor(new Date(end).getTime() / 1000);
   
-  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${startTimestamp}&period2=${endTimestamp}&interval=1d&events=div`;
+  // Use query2 for less strict rate limiting
+  const yahooUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${startTimestamp}&period2=${endTimestamp}&interval=1d&events=div`;
   
   let lastError = null;
   
@@ -71,7 +75,7 @@ export const fetchHistoricalData = async (symbol, start, end) => {
       if (text.includes('"contents"')) {
         try {
           const wrapper = JSON.parse(text);
-          jsonText = wrapper.contents;
+          if (wrapper.contents) jsonText = wrapper.contents;
         } catch (e) {
           // Not a wrapper, use original
         }
@@ -139,18 +143,34 @@ export const fetchHistoricalData = async (symbol, start, end) => {
 
 // Fetch analyst and market data
 export const fetchAnalystData = async (symbol) => {
-  // Added 'fundProfile' to the modules list for ETF AUM data
-  const yahooUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile`;
+  // Use query2 and cache-busting timestamp
+  const t = new Date().getTime();
+  const yahooUrl = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile&t=${t}`;
   
   for (const proxyFn of CORS_PROXIES) {
     try {
-      const response = await fetch(proxyFn(yahooUrl));
-      if (!response.ok) continue;
+      const proxyUrl = proxyFn(yahooUrl);
+      const response = await fetch(proxyUrl);
+      
+      if (!response.ok) {
+        // console.warn(`Proxy failed: ${proxyUrl} (${response.status})`);
+        continue;
+      }
       
       const text = await response.text();
-      if (!text.trim().startsWith('{')) continue;
       
-      const data = JSON.parse(text);
+      // Handle allorigins wrapper
+      let jsonText = text;
+      if (text.includes('"contents"')) {
+         try {
+           const wrapper = JSON.parse(text);
+           if (wrapper.contents) jsonText = wrapper.contents;
+         } catch(e) {}
+      }
+
+      if (!jsonText.trim().startsWith('{')) continue;
+      
+      const data = JSON.parse(jsonText);
       const result = data.quoteSummary?.result?.[0];
       
       if (result) {
@@ -240,12 +260,13 @@ export const fetchAnalystData = async (symbol) => {
           
           // NEW FIELDS FOR AUM & TREND
           totalAssets: totalAssets,
-          // FIXED: Changed dot notation to bracket notation for keyStats['52WeekChange']
+          // FIXED: Use bracket notation for keys starting with numbers
           fiftyTwoWeekChange: keyStats?.['52WeekChange']?.raw || summary?.fiftyTwoWeekChange?.raw,
           ytdReturn: keyStats?.ytdReturn?.raw || fundProfile?.ytdReturn?.raw,
         };
       }
     } catch (e) {
+      // console.log(`Proxy ${proxyFn('')} failed:`, e);
       continue; // Try next proxy
     }
   }
