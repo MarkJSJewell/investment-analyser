@@ -137,11 +137,9 @@ export const fetchHistoricalData = async (symbol, start, end) => {
   throw new Error(lastError?.message || `Could not fetch ${symbol}. Try running from a local server.`);
 };
 
-// ... existing imports
-
 // Fetch analyst and market data
 export const fetchAnalystData = async (symbol) => {
-  // Add 'fundProfile' to the modules list just in case, though summaryDetail usually has the data
+  // Added 'fundProfile' to the modules list for ETF AUM data
   const yahooUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile`;
   
   for (const proxyFn of CORS_PROXIES) {
@@ -163,14 +161,43 @@ export const fetchAnalystData = async (symbol) => {
         const calendar = result.calendarEvents;
         const keyStats = result.defaultKeyStatistics;
         const fundProfile = result.fundProfile; // ETF specific data
-
-        // ... [Existing FMV calculation logic remains the same] ...
         
+        // Get next earnings date
+        const earningsDate = calendar?.earnings?.earningsDate?.[0]?.raw;
+        
+        // Calculate Fair Market Value estimates
+        const currentPrice = financial?.currentPrice?.raw || price?.regularMarketPrice?.raw;
+        const bookValue = keyStats?.bookValue?.raw;
+        const priceToBook = keyStats?.priceToBook?.raw;
+        const forwardPE = summary?.forwardPE?.raw || keyStats?.forwardPE?.raw;
+        const forwardEps = keyStats?.forwardEps?.raw;
+        const pegRatio = keyStats?.pegRatio?.raw;
+        
+        // FMV calculation methods
+        let fmvEstimate = null;
+        let fmvMethod = null;
+        
+        // Method 1: Target Mean from analysts (most reliable)
+        if (financial?.targetMeanPrice?.raw) {
+          fmvEstimate = financial.targetMeanPrice.raw;
+          fmvMethod = 'Analyst Target';
+        }
+        // Method 2: Forward PE * Forward EPS
+        else if (forwardPE && forwardEps && forwardPE > 0 && forwardPE < 100) {
+          fmvEstimate = forwardPE * forwardEps;
+          fmvMethod = 'Forward PE';
+        }
+        // Method 3: Book Value * reasonable P/B multiple
+        else if (bookValue && bookValue > 0) {
+          const reasonablePB = Math.min(priceToBook || 2, 5);
+          fmvEstimate = bookValue * reasonablePB;
+          fmvMethod = 'Book Value';
+        }
+
         // Extract AUM - try multiple sources
         const totalAssets = summary?.totalAssets?.raw || fundProfile?.totalAssets?.raw || keyStats?.totalAssets?.raw;
-
+        
         return {
-          // ... [Existing return fields remain the same] ...
           strongBuy: trend?.strongBuy || 0,
           buy: trend?.buy || 0,
           hold: trend?.hold || 0,
@@ -179,7 +206,7 @@ export const fetchAnalystData = async (symbol) => {
           targetHigh: financial?.targetHighPrice?.raw,
           targetLow: financial?.targetLowPrice?.raw,
           targetMean: financial?.targetMeanPrice?.raw,
-          currentPrice: financial?.currentPrice?.raw || price?.regularMarketPrice?.raw,
+          currentPrice,
           recommendation: financial?.recommendationKey,
           name: price?.shortName || price?.longName,
           currency: price?.currency,
@@ -190,35 +217,35 @@ export const fetchAnalystData = async (symbol) => {
           fiftyDayAverage: summary?.fiftyDayAverage?.raw,
           twoHundredDayAverage: summary?.twoHundredDayAverage?.raw,
           trailingPE: summary?.trailingPE?.raw,
-          forwardPE: summary?.forwardPE?.raw || keyStats?.forwardPE?.raw,
+          forwardPE: forwardPE,
           dividendYield: summary?.dividendYield?.raw,
           beta: summary?.beta?.raw,
           volume: summary?.volume?.raw || price?.regularMarketVolume?.raw,
           averageVolume: summary?.averageVolume?.raw || price?.averageDailyVolume10Day?.raw,
           quoteType: price?.quoteType,
-          earningsDate: calendar?.earnings?.earningsDate?.[0]?.raw ? new Date(calendar.earnings.earningsDate[0].raw * 1000).toISOString().split('T')[0] : null,
+          // Formatted Dates
+          earningsDate: earningsDate ? new Date(earningsDate * 1000).toISOString().split('T')[0] : null,
           
-          // NEW FIELDS FOR AUM
-          totalAssets: totalAssets,
-          // Momentum proxies
-          fiftyTwoWeekChange: keyStats?.52WeekChange?.raw || summary?.fiftyTwoWeekChange?.raw,
-          ytdReturn: keyStats?.ytdReturn?.raw || fundProfile?.ytdReturn?.raw,
-          
-          // Existing FMV fields
-          bookValue: keyStats?.bookValue?.raw,
-          priceToBook: keyStats?.priceToBook?.raw,
-          forwardEps: keyStats?.forwardEps?.raw,
-          pegRatio: keyStats?.pegRatio?.raw,
-          fmvEstimate: null, // Placeholder to maintain structure, logic handled above in your code
-          fmvMethod: null,
+          // Existing FMV Fields
+          bookValue,
+          priceToBook,
+          forwardEps,
+          pegRatio,
+          fmvEstimate, // Using the calculated variable
+          fmvMethod,   // Using the determined method
           enterpriseValue: keyStats?.enterpriseValue?.raw,
           profitMargins: keyStats?.profitMargins?.raw,
           revenueGrowth: financial?.revenueGrowth?.raw,
-          earningsGrowth: financial?.earningsGrowth?.raw
+          earningsGrowth: financial?.earningsGrowth?.raw,
+          
+          // NEW FIELDS FOR AUM & TREND
+          totalAssets: totalAssets,
+          fiftyTwoWeekChange: keyStats?.52WeekChange?.raw || summary?.fiftyTwoWeekChange?.raw,
+          ytdReturn: keyStats?.ytdReturn?.raw || fundProfile?.ytdReturn?.raw,
         };
       }
     } catch (e) {
-      continue; 
+      continue; // Try next proxy
     }
   }
   
