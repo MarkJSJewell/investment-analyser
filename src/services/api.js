@@ -142,16 +142,36 @@ export const fetchHistoricalData = async (symbol, start, end) => {
   }
 };
 
+// Helper: Pause execution for a random time between min and max ms
+const delay = (min, max) => new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1) + min)));
+
 // Fetch analyst and market data
 export const fetchAnalystData = async (symbol) => {
+  // 1. Add "Jitter" delay
+  // Wait 500ms to 2000ms before requesting. This prevents hitting the rate limit
+  // when the page loads multiple stocks at once.
+  await delay(500, 2000);
+
+  // Use timestamp to prevent local browser caching, but rely on Proxy caching
   const t = new Date().getTime();
+  
+  // NOTE: We stripped 'fundProfile' if it causes issues, but kept it here. 
+  // If 429 persists, try removing 'fundProfile' from this list.
   const yahooUrl = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile&t=${t}`;
   
   try {
-    const data = await fetchYahoo(yahooUrl);
+    // We reuse the smart fetcher from before (ensure fetchYahoo is defined in your file)
+    // If you don't have fetchYahoo defined in this scope, just use:
+    // const response = await fetch(`/api/proxy?url=${encodeURIComponent(yahooUrl)}`);
+    // const data = await response.json();
+    
+    // Assuming you have the fetchYahoo helper from the previous step:
+    const data = await fetchYahoo(yahooUrl); 
+    
     if (!data) return null;
     
     const result = data.quoteSummary?.result?.[0];
+    
     if (result) {
       const trend = result.recommendationTrend?.trend?.[0];
       const financial = result.financialData;
