@@ -1,6 +1,15 @@
 import React, { useState, useMemo } from 'react';
 import { formatCurrency, formatPercent, getSymbolColor, getSymbolName } from '../utils/formatters';
 
+// Helper for Large Numbers (Billions/Trillions)
+const formatLargeNumber = (num) => {
+  if (!num) return '-';
+  if (num >= 1.0e+12) return `$${(num / 1.0e+12).toFixed(2)}T`;
+  if (num >= 1.0e+9) return `$${(num / 1.0e+9).toFixed(2)}B`;
+  if (num >= 1.0e+6) return `$${(num / 1.0e+6).toFixed(2)}M`;
+  return formatCurrency(num);
+};
+
 const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalyst, theme = {} }) => {
   const [sortColumn, setSortColumn] = useState('return');
   const [sortDirection, setSortDirection] = useState('desc');
@@ -59,6 +68,16 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
         case 'return':
           valueA = dataA.returnPercent;
           valueB = dataB.returnPercent;
+          break;
+        case 'aum': // NEW: Sort by AUM
+          valueA = analystA?.totalAssets || 0;
+          valueB = analystB?.totalAssets || 0;
+          break;
+        case 'momentum': // NEW: Sort by Trend
+          valueA = analystA?.currentPrice && analystA?.fiftyDayAverage 
+            ? ((analystA.currentPrice - analystA.fiftyDayAverage) / analystA.fiftyDayAverage) : -999;
+          valueB = analystB?.currentPrice && analystB?.fiftyDayAverage 
+            ? ((analystB.currentPrice - analystB.fiftyDayAverage) / analystB.fiftyDayAverage) : -999;
           break;
         case 'target':
           valueA = analystA?.targetMean || 0;
@@ -179,6 +198,11 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
               <SortHeader column="dividends">Dividends</SortHeader>
               <SortHeader column="gainLoss">Gain/Loss</SortHeader>
               <SortHeader column="return">Return</SortHeader>
+              
+              {/* NEW COLUMNS */}
+              <SortHeader column="aum">Total AUM</SortHeader>
+              <SortHeader column="momentum">Trend (Hot?)</SortHeader>
+              
               <SortHeader column="target">Target</SortHeader>
               <SortHeader column="upside">Upside</SortHeader>
               <SortHeader column="fmv">FMV</SortHeader>
@@ -199,6 +223,18 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
                 ? ((analyst.fmvEstimate - analyst.currentPrice) / analyst.currentPrice * 100) 
                 : null;
               
+              // AUM Logic
+              const hasAum = analyst?.totalAssets && analyst.totalAssets > 0;
+              
+              // Trend/Hotness Logic (Price vs 50d Avg)
+              const priceTrend = analyst?.currentPrice && analyst?.fiftyDayAverage 
+                ? ((analyst.currentPrice - analyst.fiftyDayAverage) / analyst.fiftyDayAverage * 100) 
+                : null;
+              
+              // Define "Hot" as > 5% above 50d avg, "Cold" as < -5%
+              const isHot = priceTrend > 5; 
+              const isCold = priceTrend < -5;
+
               // Format earnings date
               const formatEarningsDate = (dateStr) => {
                 if (!dateStr) return null;
@@ -245,6 +281,28 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
                       {formatPercent(data.returnPercent)}
                     </span>
                   </td>
+
+                  {/* NEW: AUM Column */}
+                  <td style={{ textAlign: 'right', padding: '10px 12px', fontWeight: '500', color: hasAum ? text : textMuted }}>
+                     {formatLargeNumber(analyst?.totalAssets)}
+                  </td>
+
+                  {/* NEW: Trend/Hotness Column */}
+                  <td style={{ textAlign: 'right', padding: '10px 12px' }}>
+                    {priceTrend !== null ? (
+                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                         <span style={{ 
+                           color: isHot ? '#2E7D32' : (isCold ? '#C62828' : text),
+                           fontWeight: isHot ? 'bold' : 'normal',
+                           fontSize: '12px'
+                         }}>
+                           {isHot ? '🔥 ' : ''}{priceTrend > 0 ? '+' : ''}{priceTrend.toFixed(1)}%
+                         </span>
+                         <span style={{ fontSize: '10px', color: textMuted }}>vs 50d Avg</span>
+                       </div>
+                    ) : '-'}
+                  </td>
+
                   <td style={{ textAlign: 'right', padding: '10px 12px', color: '#666' }}>
                     {analyst?.targetMean ? `$${analyst.targetMean.toFixed(2)}` : '-'}
                   </td>
@@ -333,6 +391,10 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
                   {formatPercent(totalReturn)}
                 </span>
               </td>
+              {/* Spacer cells for new columns */}
+              <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
+              <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
+              
               <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
               <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
               <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
