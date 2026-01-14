@@ -231,8 +231,8 @@ export const fetchAnalystData = async (symbol) => {
           priceToBook,
           forwardEps,
           pegRatio,
-          fmvEstimate, // Using the calculated variable
-          fmvMethod,   // Using the determined method
+          fmvEstimate, 
+          fmvMethod,   
           enterpriseValue: keyStats?.enterpriseValue?.raw,
           profitMargins: keyStats?.profitMargins?.raw,
           revenueGrowth: financial?.revenueGrowth?.raw,
@@ -240,7 +240,8 @@ export const fetchAnalystData = async (symbol) => {
           
           // NEW FIELDS FOR AUM & TREND
           totalAssets: totalAssets,
-          fiftyTwoWeekChange: keyStats?.52WeekChange?.raw || summary?.fiftyTwoWeekChange?.raw,
+          // FIXED: Changed dot notation to bracket notation for keyStats['52WeekChange']
+          fiftyTwoWeekChange: keyStats?.['52WeekChange']?.raw || summary?.fiftyTwoWeekChange?.raw,
           ytdReturn: keyStats?.ytdReturn?.raw || fundProfile?.ytdReturn?.raw,
         };
       }
