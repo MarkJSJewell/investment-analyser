@@ -9,9 +9,8 @@ import NewsPanel from './components/NewsPanel';
 import { fetchQuote, fetchHistoricalData, fetchAnalystData } from './services/api';
 import { calculateDCA, buildChartData } from './utils/calculations';
 
-// Theme Context
+// Theme Context (Kept simple for prop compatibility, but hardcoded to Light Mode)
 export const ThemeContext = createContext();
-
 export const useTheme = () => useContext(ThemeContext);
 
 function App() {
@@ -34,18 +33,17 @@ function App() {
   const [analystData, setAnalystData] = useState({});
   const [loadingAnalyst, setLoadingAnalyst] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
 
-  // Theme colors
+  // Hardcoded Light Theme
   const theme = {
-    bg: darkMode ? '#1a1a2e' : '#f5f5f5',
-    cardBg: darkMode ? '#16213e' : 'white',
-    text: darkMode ? '#e8e8e8' : '#333',
-    textMuted: darkMode ? '#a0a0a0' : '#666',
-    border: darkMode ? '#2a2a4a' : '#e0e0e0',
-    inputBg: darkMode ? '#1a1a2e' : 'white',
-    headerBg: darkMode ? '#0f0f1a' : 'white',
-    hoverBg: darkMode ? '#2a2a4a' : '#f8f9fa',
+    bg: '#f5f5f5',
+    cardBg: 'white',
+    text: '#333',
+    textMuted: '#666',
+    border: '#e0e0e0',
+    inputBg: 'white',
+    headerBg: 'white',
+    hoverBg: '#f8f9fa',
   };
 
   const addStock = () => stocks.length < 10 && setStocks([...stocks, { symbol: '', status: 'idle', name: '' }]);
@@ -56,7 +54,7 @@ function App() {
   const toggleCrypto = (s) => setSelectedCrypto(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s]);
   const toggleBond = (s) => setSelectedBonds(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s]);
 
-const validateStock = async (index) => {
+  const validateStock = async (index) => {
     const stock = stocks[index];
     if (!stock.symbol.trim()) return;
     
@@ -65,13 +63,14 @@ const validateStock = async (index) => {
     setStocks(n);
     
     try {
+      // Logic handles ISIN -> Ticker resolution
       const r = await fetchQuote(stock.symbol);
       const u = [...stocks]; 
       
       if (r.valid) {
-        // If ISIN resolution found a new symbol (e.g. GB00... -> GB00...L), update it
+        // Update with resolved symbol (e.g. GB00... -> 0P00...)
         u[index] = { 
-          symbol: r.symbol || stock.symbol, // Use resolved symbol
+          symbol: r.symbol || stock.symbol, 
           status: 'valid', 
           name: r.name 
         };
@@ -92,6 +91,7 @@ const validateStock = async (index) => {
       const validStocks = stocks.filter(s => s.symbol.trim());
       const allSymbols = [...validStocks.map(s => s.symbol), ...selectedIndexes, ...selectedCrypto, ...selectedBonds, ...selectedCommodities];
       if (allSymbols.length === 0) throw new Error('Please enter at least one stock symbol');
+      
       const analysisResults = {};
       for (const symbol of allSymbols) {
         try {
@@ -103,7 +103,7 @@ const validateStock = async (index) => {
       const chartData = buildChartData(analysisResults, allSymbols, investmentMode, investmentAmount);
       setResults({ analysis: analysisResults, chartData, allSymbols });
       
-      // Fetch analyst data in background
+      // Fetch analyst data sequentially to be kind to API
       setLoadingAnalyst(true);
       const analystResults = {};
       for (const symbol of allSymbols) { 
@@ -131,48 +131,25 @@ const validateStock = async (index) => {
   };
 
   return (
-    <ThemeContext.Provider value={{ darkMode, theme }}>
+    <ThemeContext.Provider value={{ darkMode: false, theme }}>
       <div style={{ minHeight: '100vh', background: theme.bg, color: theme.text }}>
         <header style={{ background: theme.headerBg, borderBottom: `1px solid ${theme.border}`, padding: '12px 24px' }}>
-          <div style={{ maxWidth: '1900px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h1 style={{ fontSize: '20px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <h1 style={{ fontSize: '20px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '10px', margin: 0 }}>
               <span style={{ fontSize: '24px' }}>📈</span> Investment Calculator
             </h1>
-            
-            {/* Theme Toggle */}
-            <button
-              onClick={() => setDarkMode(!darkMode)}
-              style={{
-                background: darkMode ? '#333' : '#f0f0f0',
-                border: 'none',
-                borderRadius: '20px',
-                padding: '8px 16px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                fontSize: '14px',
-                color: theme.text
-              }}
-            >
-              {darkMode ? '☀️ Light' : '🌙 Dark'}
-            </button>
           </div>
         </header>
 
-        <main style={{ maxWidth: '1900px', margin: '0 auto', padding: '20px' }}>
-          {/* Main Layout - responsive grid */}
+        {/* Updated Main Layout: Removed margin: 0 auto, set width to 100% to fill left space */}
+        <main style={{ width: '100%', padding: '20px', boxSizing: 'border-box' }}>
+          
           <div style={{ 
             display: 'grid', 
-            // If results exist: On wide screens use 3 cols, on medium use 2 cols, on small 1 col
-            // If no results: 1 column centered
-            gridTemplateColumns: results 
-              ? (sidebarCollapsed 
-                  ? '50px 1fr minmax(300px, 320px)' 
-                  : 'repeat(auto-fit, minmax(350px, 1fr))') 
-              : 'minmax(300px, 600px)', 
+            // Reverted to original grid preferences per request
+            gridTemplateColumns: results ? (sidebarCollapsed ? '50px 1fr 320px' : '400px 1fr 320px') : '1fr', 
             gap: '20px',
-            justifyContent: results ? 'stretch' : 'center'
+            alignItems: 'start' 
           }}>
             
             {/* Left Sidebar - Input Controls */}
@@ -207,7 +184,7 @@ const validateStock = async (index) => {
                     flexShrink: 0
                   }}
                 >
-                  {sidebarCollapsed ? '▶ Expand' : '◀ Collapse'}
+                  {sidebarCollapsed ? '▶' : '◀ Collapse'}
                 </button>
               )}
               
@@ -273,7 +250,7 @@ const validateStock = async (index) => {
                 </div>
               )}
               
-              {/* Fixed Calculate Button at Bottom */}
+              {/* Fixed Calculate Button */}
               <div style={{ 
                 padding: sidebarCollapsed ? '8px' : '16px 20px',
                 borderTop: `1px solid ${theme.border}`,
@@ -326,7 +303,7 @@ const validateStock = async (index) => {
 
             {/* Middle Content Area */}
             {results && (
-              <div>
+              <div style={{ minWidth: 0 }}>
                 {/* Chart */}
                 <PortfolioChart chartData={results.chartData} allSymbols={results.allSymbols} stocks={stocks} theme={theme} />
                 
@@ -340,7 +317,7 @@ const validateStock = async (index) => {
                   theme={theme}
                 />
                 
-                {/* Index Constituents - Under summary table */}
+                {/* Index Constituents */}
                 {selectedIndexes.length > 0 && (
                   <IndexConstituents selectedIndexes={selectedIndexes} startDate={startDate} endDate={endDate} theme={theme} />
                 )}
@@ -352,16 +329,22 @@ const validateStock = async (index) => {
 
             {/* Right Sidebar - News Panel */}
             {results && (
-              <div style={{ position: 'sticky', top: '20px', height: 'fit-content', maxHeight: 'calc(100vh - 40px)', overflowY: 'auto' }}>
+              <div style={{ 
+                position: 'sticky', 
+                top: '20px', 
+                height: 'fit-content', 
+                maxHeight: 'calc(100vh - 40px)', 
+                overflowY: 'auto'
+              }}>
                 <NewsPanel symbols={results.allSymbols} stocks={stocks} theme={theme} />
               </div>
             )}
 
             {/* Show info box when no results */}
             {!results && (
-              <div style={{ background: darkMode ? '#1e3a5f' : '#E3F2FD', borderRadius: '8px', padding: '20px', fontSize: '13px' }}>
+              <div style={{ background: '#E3F2FD', borderRadius: '8px', padding: '20px', fontSize: '13px', maxWidth: '600px', justifySelf: 'start' }}>
                 <strong>ℹ️ How to use</strong>
-                <p style={{ marginTop: '8px', lineHeight: '1.5' }}>1. Enter stock symbols (e.g., AAPL, MSFT)</p>
+                <p style={{ marginTop: '8px', lineHeight: '1.5' }}>1. Enter stock symbols (e.g., AAPL, MSFT) or ISINs</p>
                 <p style={{ marginTop: '4px', lineHeight: '1.5' }}>2. Select indexes, crypto or commodities to compare</p>
                 <p style={{ marginTop: '4px', lineHeight: '1.5' }}>3. Set your date range and investment amount</p>
                 <p style={{ marginTop: '4px', lineHeight: '1.5' }}>4. Click "Calculate Returns"</p>
