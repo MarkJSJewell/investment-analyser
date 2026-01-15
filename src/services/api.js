@@ -6,27 +6,37 @@ const PUBLIC_PROXIES = [
   (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`, 
 ];
 
-// Helper: Pause execution for a random time (Jitter)
-const delay = (min, max) => new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1) + min)));
+// Helper: Pause execution
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Helper: Smart fetcher with fallback
-const fetchYahoo = async (yahooUrl) => {
+// Helper: Smart fetcher with robust error handling
+const fetchYahoo = async (yahooUrl, retryCount = 0) => {
+  // Strategy A: Try Vercel Proxy
   try {
     const res = await fetch(VERCEL_PROXY(yahooUrl));
+    
+    // If successful, return data
     if (res.ok) {
       const text = await res.text();
       if (text.trim().startsWith('{')) return JSON.parse(text);
     }
-    // If Vercel proxy returns 429, throw specifically so we can handle or log it
-    if (res.status === 429) throw new Error('Rate Limited (429)');
+    
+    // If Rate Limited (429) or Unauthorized (401)
+    if ((res.status === 429 || res.status === 401) && retryCount < 2) {
+      console.warn(`Rate limited on Vercel proxy (${res.status}). Waiting 3s...`);
+      await wait(3000); // Wait 3 seconds
+      return fetchYahoo(yahooUrl, retryCount + 1); // Recursive Retry
+    }
+    
     throw new Error(`Local proxy failed with ${res.status}`);
   } catch (localError) {
-    // Fallback to public proxies
+    // Strategy B: Fallback to Public Proxies (Only if Vercel fails completely)
     for (const proxyFn of PUBLIC_PROXIES) {
       try {
-        await delay(1000, 2000); // Wait before hitting public proxies too
+        await wait(1500); // Courtesy delay
         const res = await fetch(proxyFn(yahooUrl));
         if (!res.ok) continue;
+        
         const text = await res.text();
         let jsonText = text;
         if (text.includes('"contents"')) {
@@ -39,8 +49,11 @@ const fetchYahoo = async (yahooUrl) => {
       } catch (e) { continue; }
     }
   }
-  throw new Error('All proxy attempts failed');
+  // Return null instead of throwing to prevent crashing the whole list
+  return null; 
 };
+
+// ... [Keep validateSymbolFormat, searchSymbol, fetchQuote, fetchHistoricalData exactly as they are] ...
 
 export const validateSymbolFormat = (symbol) => {
   return /^[A-Z]{2}[A-Z0-9]{9}\d$/.test(symbol) ||
@@ -54,7 +67,7 @@ export const searchSymbol = async (query) => {
   const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=1&newsCount=0`;
   try {
     const data = await fetchYahoo(url);
-    if (data.quotes && data.quotes.length > 0) {
+    if (data && data.quotes && data.quotes.length > 0) {
       const bestMatch = data.quotes[0];
       return {
         symbol: bestMatch.symbol,
@@ -62,9 +75,7 @@ export const searchSymbol = async (query) => {
         type: bestMatch.quoteType
       };
     }
-  } catch (e) {
-    console.log('Search failed:', e);
-  }
+  } catch (e) { console.log('Search failed:', e); }
   return null;
 };
 
@@ -75,27 +86,19 @@ export const fetchQuote = async (symbol) => {
     if (searchResult) targetSymbol = searchResult.symbol;
   }
 
-  if (!validateSymbolFormat(targetSymbol)) {
-    return { valid: false, error: 'Invalid format.' };
-  }
+  if (!validateSymbolFormat(targetSymbol)) return { valid: false, error: 'Invalid format.' };
   
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(targetSymbol)}?interval=1d&range=5d`;
   
   try {
     const data = await fetchYahoo(url);
-    if (data.chart?.result?.[0]?.meta) {
+    if (data && data.chart?.result?.[0]?.meta) {
       const meta = data.chart.result[0].meta;
-      return { 
-        valid: true, 
-        name: meta.shortName || meta.longName || meta.symbol || targetSymbol,
-        symbol: targetSymbol 
-      };
-    } else if (data.chart?.error) {
-      return { valid: false, error: data.chart.error.description || 'Symbol not found' };
+      return { valid: true, name: meta.shortName || meta.longName || meta.symbol, symbol: targetSymbol };
+    } else if (data && data.chart?.error) {
+      return { valid: false, error: data.chart.error.description };
     }
-  } catch (e) {
-    console.log('Validation fetch error:', e);
-  }
+  } catch (e) { console.log('Validation error:', e); }
   return { valid: true, name: `${targetSymbol} (unverified)`, symbol: targetSymbol };
 };
 
@@ -105,12 +108,10 @@ export const fetchHistoricalData = async (symbol, start, end) => {
   const yahooUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${startTimestamp}&period2=${endTimestamp}&interval=1d&events=div`;
   
   try {
-    await delay(500, 1500); // Slight delay for charts
+    await wait(1000); // Standard delay
     const data = await fetchYahoo(yahooUrl);
     
-    if (data.chart?.error) throw new Error(data.chart.error.description);
-    if (!data.chart?.result?.[0]) throw new Error('No data returned');
-    
+    if (!data || !data.chart?.result?.[0]) throw new Error('No data');
     const result = data.chart.result[0];
     const timestamps = result.timestamp;
     const quotes = result.indicators.quote[0];
@@ -126,31 +127,23 @@ export const fetchHistoricalData = async (symbol, start, end) => {
     
     if (!timestamps || !adjClose) throw new Error('Missing price data');
     
-    return timestamps.map((ts, i) => {
-      const date = new Date(ts * 1000).toISOString().split('T')[0];
-      return {
-        date,
-        price: adjClose[i] || quotes.close[i],
-        dividend: dividends[date] || 0
-      };
-    }).filter(d => d.price !== null && d.price !== undefined);
+    return timestamps.map((ts, i) => ({
+      date: new Date(ts * 1000).toISOString().split('T')[0],
+      price: adjClose[i] || quotes.close[i],
+      dividend: dividends[new Date(ts * 1000).toISOString().split('T')[0]] || 0
+    })).filter(d => d.price !== null);
     
-  } catch (err) {
-    throw new Error(err.message || `Could not fetch ${symbol}`);
-  }
+  } catch (err) { throw new Error(err.message || `Could not fetch ${symbol}`); }
 };
 
 export const fetchAnalystData = async (symbol) => {
-  // 1. CRITICAL: Wait 1-2 seconds before requesting. 
-  // This prevents the "429 Too Many Requests" error when loading lists.
-  await delay(1000, 2000);
-
+  // Use timestamp to break browser caching, but rely on Proxy caching
   const t = new Date().getTime();
   const yahooUrl = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile&t=${t}`;
   
   try {
     const data = await fetchYahoo(yahooUrl);
-    if (!data) return null;
+    if (!data) return null; // Graceful failure
     
     const result = data.quoteSummary?.result?.[0];
     if (result) {
@@ -188,7 +181,7 @@ export const fetchAnalystData = async (symbol) => {
         strongSell: trend?.strongSell || 0,
         earningsDate: result.calendarEvents?.earnings?.earningsDate?.[0]?.raw ? new Date(result.calendarEvents.earnings.earningsDate[0].raw * 1000).toISOString().split('T')[0] : null,
         
-        // Ensure Dividend Yield is captured
+        // Ensure Dividend Yield is captured for the new tab
         dividendYield: summary?.dividendYield?.raw || summary?.yield?.raw
       };
     }
