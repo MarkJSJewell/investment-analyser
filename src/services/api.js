@@ -6,6 +6,9 @@ const PUBLIC_PROXIES = [
   (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`, 
 ];
 
+// Helper: Pause execution for a random time (Jitter)
+const delay = (min, max) => new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1) + min)));
+
 // Helper: Smart fetcher with fallback
 const fetchYahoo = async (yahooUrl) => {
   try {
@@ -14,10 +17,14 @@ const fetchYahoo = async (yahooUrl) => {
       const text = await res.text();
       if (text.trim().startsWith('{')) return JSON.parse(text);
     }
+    // If Vercel proxy returns 429, throw specifically so we can handle or log it
+    if (res.status === 429) throw new Error('Rate Limited (429)');
     throw new Error(`Local proxy failed with ${res.status}`);
   } catch (localError) {
+    // Fallback to public proxies
     for (const proxyFn of PUBLIC_PROXIES) {
       try {
+        await delay(1000, 2000); // Wait before hitting public proxies too
         const res = await fetch(proxyFn(yahooUrl));
         if (!res.ok) continue;
         const text = await res.text();
@@ -36,7 +43,6 @@ const fetchYahoo = async (yahooUrl) => {
 };
 
 export const validateSymbolFormat = (symbol) => {
-  // Allow ISIN format (2 letters + 9 alphanum + 1 digit) or standard tickers
   return /^[A-Z]{2}[A-Z0-9]{9}\d$/.test(symbol) ||
          /^[A-Z]{1,5}$/.test(symbol) || 
          /^\^[A-Z0-9]+$/.test(symbol) || 
@@ -44,7 +50,6 @@ export const validateSymbolFormat = (symbol) => {
          /^[A-Z0-9]+\.[A-Z]+$/.test(symbol);
 };
 
-// NEW: Search Yahoo for a symbol (Handles ISIN resolution)
 export const searchSymbol = async (query) => {
   const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=1&newsCount=0`;
   try {
@@ -52,7 +57,7 @@ export const searchSymbol = async (query) => {
     if (data.quotes && data.quotes.length > 0) {
       const bestMatch = data.quotes[0];
       return {
-        symbol: bestMatch.symbol, // Returns the actual ticker (e.g., GB00...L)
+        symbol: bestMatch.symbol,
         name: bestMatch.shortname || bestMatch.longname,
         type: bestMatch.quoteType
       };
@@ -63,16 +68,11 @@ export const searchSymbol = async (query) => {
   return null;
 };
 
-// Updated: Fetch quote for validation with ISIN support
 export const fetchQuote = async (symbol) => {
   let targetSymbol = symbol;
-
-  // 1. Detect ISIN (12 chars starting with country code)
   if (/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(symbol)) {
     const searchResult = await searchSymbol(symbol);
-    if (searchResult) {
-      targetSymbol = searchResult.symbol; // Use the resolved ticker
-    }
+    if (searchResult) targetSymbol = searchResult.symbol;
   }
 
   if (!validateSymbolFormat(targetSymbol)) {
@@ -88,7 +88,7 @@ export const fetchQuote = async (symbol) => {
       return { 
         valid: true, 
         name: meta.shortName || meta.longName || meta.symbol || targetSymbol,
-        symbol: targetSymbol // Return the correct symbol if it changed (ISIN -> Ticker)
+        symbol: targetSymbol 
       };
     } else if (data.chart?.error) {
       return { valid: false, error: data.chart.error.description || 'Symbol not found' };
@@ -96,17 +96,16 @@ export const fetchQuote = async (symbol) => {
   } catch (e) {
     console.log('Validation fetch error:', e);
   }
-
   return { valid: true, name: `${targetSymbol} (unverified)`, symbol: targetSymbol };
 };
 
-// Fetch historical data (using sequential logic to be kind to API)
 export const fetchHistoricalData = async (symbol, start, end) => {
   const startTimestamp = Math.floor(new Date(start).getTime() / 1000);
   const endTimestamp = Math.floor(new Date(end).getTime() / 1000);
   const yahooUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${startTimestamp}&period2=${endTimestamp}&interval=1d&events=div`;
   
   try {
+    await delay(500, 1500); // Slight delay for charts
     const data = await fetchYahoo(yahooUrl);
     
     if (data.chart?.error) throw new Error(data.chart.error.description);
@@ -141,8 +140,11 @@ export const fetchHistoricalData = async (symbol, start, end) => {
   }
 };
 
-// Fetch analyst data with retry/delay support handled by proxy
 export const fetchAnalystData = async (symbol) => {
+  // 1. CRITICAL: Wait 1-2 seconds before requesting. 
+  // This prevents the "429 Too Many Requests" error when loading lists.
+  await delay(1000, 2000);
+
   const t = new Date().getTime();
   const yahooUrl = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile&t=${t}`;
   
@@ -162,7 +164,6 @@ export const fetchAnalystData = async (symbol) => {
       const totalAssets = summary?.totalAssets?.raw || fundProfile?.totalAssets?.raw || keyStats?.totalAssets?.raw;
       const currentPrice = financial?.currentPrice?.raw || price?.regularMarketPrice?.raw;
 
-      // Simplifed FMV Logic extraction for brevity (full logic is in previous answers if needed)
       let fmvEstimate = null;
       let fmvMethod = null;
       if (financial?.targetMeanPrice?.raw) {
@@ -171,19 +172,14 @@ export const fetchAnalystData = async (symbol) => {
       }
 
       return {
-        // ... Standard fields ...
         targetMean: financial?.targetMeanPrice?.raw,
         currentPrice,
         recommendation: financial?.recommendationKey,
         name: price?.shortName || price?.longName,
         currency: price?.currency,
-        
-        // Critical AUM Fields
         totalAssets: totalAssets,
         fiftyTwoWeekChange: keyStats?.['52WeekChange']?.raw || summary?.fiftyTwoWeekChange?.raw,
         ytdReturn: keyStats?.ytdReturn?.raw || fundProfile?.ytdReturn?.raw,
-        
-        // Return full object structure as needed by SummaryTable
         fmvEstimate, fmvMethod,
         strongBuy: trend?.strongBuy || 0,
         buy: trend?.buy || 0,
@@ -191,6 +187,9 @@ export const fetchAnalystData = async (symbol) => {
         sell: trend?.sell || 0,
         strongSell: trend?.strongSell || 0,
         earningsDate: result.calendarEvents?.earnings?.earningsDate?.[0]?.raw ? new Date(result.calendarEvents.earnings.earningsDate[0].raw * 1000).toISOString().split('T')[0] : null,
+        
+        // Ensure Dividend Yield is captured
+        dividendYield: summary?.dividendYield?.raw || summary?.yield?.raw
       };
     }
   } catch (e) {
