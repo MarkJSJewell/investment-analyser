@@ -56,14 +56,34 @@ function App() {
   const toggleCrypto = (s) => setSelectedCrypto(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s]);
   const toggleBond = (s) => setSelectedBonds(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s]);
 
-  const validateStock = async (index) => {
+const validateStock = async (index) => {
     const stock = stocks[index];
     if (!stock.symbol.trim()) return;
-    const n = [...stocks]; n[index] = { ...stock, status: 'validating' }; setStocks(n);
+    
+    const n = [...stocks]; 
+    n[index] = { ...stock, status: 'validating' }; 
+    setStocks(n);
+    
     try {
       const r = await fetchQuote(stock.symbol);
-      const u = [...stocks]; u[index] = { symbol: stock.symbol, status: r.valid ? 'valid' : 'invalid', name: r.valid ? r.name : (r.error || 'Invalid') }; setStocks(u);
-    } catch { const u = [...stocks]; u[index] = { symbol: stock.symbol, status: 'invalid', name: 'Could not validate' }; setStocks(u); }
+      const u = [...stocks]; 
+      
+      if (r.valid) {
+        // If ISIN resolution found a new symbol (e.g. GB00... -> GB00...L), update it
+        u[index] = { 
+          symbol: r.symbol || stock.symbol, // Use resolved symbol
+          status: 'valid', 
+          name: r.name 
+        };
+      } else {
+        u[index] = { ...stock, status: 'invalid', name: r.error || 'Invalid' };
+      }
+      setStocks(u);
+    } catch { 
+      const u = [...stocks]; 
+      u[index] = { ...stock, status: 'invalid', name: 'Could not validate' }; 
+      setStocks(u); 
+    }
   };
 
   const runAnalysis = async () => {
@@ -141,8 +161,19 @@ function App() {
         </header>
 
         <main style={{ maxWidth: '1900px', margin: '0 auto', padding: '20px' }}>
-          {/* Main Layout */}
-          <div style={{ display: 'grid', gridTemplateColumns: results ? (sidebarCollapsed ? '50px 1fr 320px' : '400px 1fr 320px') : '1fr', gap: '20px' }}>
+          {/* Main Layout - responsive grid */}
+          <div style={{ 
+            display: 'grid', 
+            // If results exist: On wide screens use 3 cols, on medium use 2 cols, on small 1 col
+            // If no results: 1 column centered
+            gridTemplateColumns: results 
+              ? (sidebarCollapsed 
+                  ? '50px 1fr minmax(300px, 320px)' 
+                  : 'repeat(auto-fit, minmax(350px, 1fr))') 
+              : 'minmax(300px, 600px)', 
+            gap: '20px',
+            justifyContent: results ? 'stretch' : 'center'
+          }}>
             
             {/* Left Sidebar - Input Controls */}
             <div style={{ 
