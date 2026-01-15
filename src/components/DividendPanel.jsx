@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { fetchAnalystData } from '../services/api';
 import { DIVIDEND_LISTS } from '../utils/marketDefaults';
-import { fetchAnalystData } from '../services/api';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
 // Helper for strict sequential delay
