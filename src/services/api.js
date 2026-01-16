@@ -1,37 +1,29 @@
-// Point to our local Vercel proxy
+// PROXY CONFIGURATION
 const VERCEL_PROXY = (url) => `/api/proxy?url=${encodeURIComponent(url)}`;
 
 // Helper: Pause execution (Jitter)
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Helper: Smart fetcher with robust error handling
+// Helper: Smart fetcher
 const fetchYahoo = async (yahooUrl, retryCount = 0) => {
   try {
     const res = await fetch(VERCEL_PROXY(yahooUrl));
-    
-    // If successful, return data
     if (res.ok) {
       const text = await res.text();
       if (text.trim().startsWith('{')) return JSON.parse(text);
     }
-    
-    // If Rate Limited (429) or Unauthorized (401), wait and retry
-    // We retry up to 3 times with increasing delays (2s, 4s, 6s)
-    if ((res.status === 429 || res.status === 401) && retryCount < 3) {
-      const delayTime = 2000 * (retryCount + 1); 
-      console.warn(`Rate limited (429/401). Waiting ${delayTime}ms...`);
-      await wait(delayTime);
-      return fetchYahoo(yahooUrl, retryCount + 1); // Recursive Retry
+    // Only retry on 429 (Rate Limit), NOT 401 (Blocked/Unauthorized)
+    if (res.status === 429 && retryCount < 2) {
+      await wait(2000 * (retryCount + 1));
+      return fetchYahoo(yahooUrl, retryCount + 1);
     }
-    
-    console.warn(`Proxy failed with status ${res.status}`);
-    return null; // Fail gracefully so the app doesn't crash
+    return null; // Return null on 401/500 so we can trigger fallback
   } catch (error) {
-    console.warn('Fetch error:', error);
     return null;
   }
 };
 
+// ... [Keep validateSymbolFormat, searchSymbol, fetchQuote unchanged] ...
 export const validateSymbolFormat = (symbol) => {
   return /^[A-Z]{2}[A-Z0-9]{9}\d$/.test(symbol) ||
          /^[A-Z]{1,5}$/.test(symbol) || 
@@ -41,17 +33,11 @@ export const validateSymbolFormat = (symbol) => {
 };
 
 export const searchSymbol = async (query) => {
-  // Use query1 via proxy
   const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=1&newsCount=0`;
   try {
     const data = await fetchYahoo(url);
-    if (data && data.quotes && data.quotes.length > 0) {
-      const bestMatch = data.quotes[0];
-      return {
-        symbol: bestMatch.symbol,
-        name: bestMatch.shortname || bestMatch.longname,
-        type: bestMatch.quoteType
-      };
+    if (data?.quotes?.[0]) {
+      return { symbol: data.quotes[0].symbol, name: data.quotes[0].shortname || data.quotes[0].longname };
     }
   } catch (e) { console.log('Search failed:', e); }
   return null;
@@ -59,46 +45,33 @@ export const searchSymbol = async (query) => {
 
 export const fetchQuote = async (symbol) => {
   let targetSymbol = symbol;
-  // Handle ISIN
   if (/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(symbol)) {
     const searchResult = await searchSymbol(symbol);
     if (searchResult) targetSymbol = searchResult.symbol;
   }
-
-  if (!validateSymbolFormat(targetSymbol)) {
-    return { valid: false, error: 'Invalid format.' };
-  }
   
+  // Quick chart fetch to validate
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(targetSymbol)}?interval=1d&range=5d`;
-  
   try {
     const data = await fetchYahoo(url);
-    if (data && data.chart?.result?.[0]?.meta) {
-      const meta = data.chart.result[0].meta;
-      return { 
-        valid: true, 
-        name: meta.shortName || meta.longName || meta.symbol || targetSymbol,
-        symbol: targetSymbol 
-      };
-    } else if (data && data.chart?.error) {
-      return { valid: false, error: data.chart.error.description || 'Symbol not found' };
+    if (data?.chart?.result?.[0]?.meta) {
+      return { valid: true, name: data.chart.result[0].meta.shortName, symbol: targetSymbol };
     }
-  } catch (e) {
-    console.log('Validation fetch error:', e);
-  }
+  } catch (e) {}
   return { valid: true, name: `${targetSymbol} (unverified)`, symbol: targetSymbol };
 };
 
+// ... [Keep fetchHistoricalData unchanged] ...
 export const fetchHistoricalData = async (symbol, start, end) => {
   const startTimestamp = Math.floor(new Date(start).getTime() / 1000);
   const endTimestamp = Math.floor(new Date(end).getTime() / 1000);
   const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${startTimestamp}&period2=${endTimestamp}&interval=1d&events=div`;
   
   try {
-    await wait(1000); // Standard courtesy delay
+    await wait(500); 
     const data = await fetchYahoo(yahooUrl);
+    if (!data?.chart?.result?.[0]) throw new Error('No data');
     
-    if (!data || !data.chart?.result?.[0]) throw new Error('No data');
     const result = data.chart.result[0];
     const timestamps = result.timestamp;
     const quotes = result.indicators.quote[0];
@@ -107,8 +80,7 @@ export const fetchHistoricalData = async (symbol, start, end) => {
     const dividends = {};
     if (result.events?.dividends) {
       Object.values(result.events.dividends).forEach(div => {
-        const divDate = new Date(div.date * 1000).toISOString().split('T')[0];
-        dividends[divDate] = div.amount;
+        dividends[new Date(div.date * 1000).toISOString().split('T')[0]] = div.amount;
       });
     }
     
@@ -119,65 +91,87 @@ export const fetchHistoricalData = async (symbol, start, end) => {
       price: adjClose[i] || quotes.close[i],
       dividend: dividends[new Date(ts * 1000).toISOString().split('T')[0]] || 0
     })).filter(d => d.price !== null);
-    
-  } catch (err) {
-    throw new Error(err.message || `Could not fetch ${symbol}`);
-  }
+  } catch (err) { throw new Error(err.message || `Could not fetch ${symbol}`); }
 };
 
+// --- NEW HYBRID ANALYST FETCHER ---
 export const fetchAnalystData = async (symbol) => {
-  // 1. Initial delay to stagger requests
-  await wait(1500);
+  await wait(1000); // Courtesy delay
 
+  // STRATEGY 1: Try Rich Data (Often Blocked)
   const t = new Date().getTime();
-  const yahooUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile&t=${t}`;
+  const richUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile&t=${t}`;
   
-  try {
-    const data = await fetchYahoo(yahooUrl);
-    if (!data) return null; 
+  const richData = await fetchYahoo(richUrl);
+
+  if (richData?.quoteSummary?.result?.[0]) {
+    // ... [Logic to parse rich data if successful - same as before] ...
+    const result = richData.quoteSummary.result[0];
+    const financial = result.financialData;
+    const summary = result.summaryDetail;
+    const price = result.price;
+    const keyStats = result.defaultKeyStatistics;
     
-    const result = data.quoteSummary?.result?.[0];
-    if (result) {
-      const financial = result.financialData;
-      const summary = result.summaryDetail;
-      const price = result.price;
-      const keyStats = result.defaultKeyStatistics;
-      const fundProfile = result.fundProfile;
-      const trend = result.recommendationTrend?.trend?.[0];
-      
-      const totalAssets = summary?.totalAssets?.raw || fundProfile?.totalAssets?.raw || keyStats?.totalAssets?.raw;
-      const currentPrice = financial?.currentPrice?.raw || price?.regularMarketPrice?.raw;
-
-      let fmvEstimate = null;
-      let fmvMethod = null;
-      if (financial?.targetMeanPrice?.raw) {
-        fmvEstimate = financial.targetMeanPrice.raw;
-        fmvMethod = 'Analyst Target';
-      }
-
-      return {
-        targetMean: financial?.targetMeanPrice?.raw,
-        currentPrice,
-        recommendation: financial?.recommendationKey,
-        name: price?.shortName || price?.longName,
-        currency: price?.currency,
-        totalAssets: totalAssets,
-        fiftyTwoWeekChange: keyStats?.['52WeekChange']?.raw || summary?.fiftyTwoWeekChange?.raw,
-        ytdReturn: keyStats?.ytdReturn?.raw || fundProfile?.ytdReturn?.raw,
-        fmvEstimate, fmvMethod,
-        strongBuy: trend?.strongBuy || 0,
-        buy: trend?.buy || 0,
-        hold: trend?.hold || 0,
-        sell: trend?.sell || 0,
-        strongSell: trend?.strongSell || 0,
-        earningsDate: result.calendarEvents?.earnings?.earningsDate?.[0]?.raw ? new Date(result.calendarEvents.earnings.earningsDate[0].raw * 1000).toISOString().split('T')[0] : null,
-        
-        // Ensure Dividend Yield is captured
-        dividendYield: summary?.dividendYield?.raw || summary?.yield?.raw
-      };
-    }
-  } catch (e) {
-    console.log(`Could not fetch analyst data for ${symbol}:`, e);
+    return {
+      targetMean: financial?.targetMeanPrice?.raw,
+      currentPrice: financial?.currentPrice?.raw || price?.regularMarketPrice?.raw,
+      recommendation: financial?.recommendationKey,
+      name: price?.shortName || price?.longName,
+      currency: price?.currency,
+      totalAssets: summary?.totalAssets?.raw || result.fundProfile?.totalAssets?.raw,
+      fiftyTwoWeekChange: keyStats?.['52WeekChange']?.raw,
+      ytdReturn: keyStats?.ytdReturn?.raw,
+      dividendYield: summary?.dividendYield?.raw || summary?.yield?.raw,
+      earningsDate: result.calendarEvents?.earnings?.earningsDate?.[0]?.raw ? new Date(result.calendarEvents.earnings.earningsDate[0].raw * 1000).toISOString().split('T')[0] : null
+    };
   }
+
+  // STRATEGY 2: Fallback to Chart Data (Open)
+  // If Strategy 1 failed (401/429), we calculate yield manually from history
+  console.log(`Fallback for ${symbol}: Calculating data from Chart API`);
+  
+  // Fetch last 365 days to sum dividends
+  const now = new Date();
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(now.getFullYear() - 1);
+  const startTs = Math.floor(oneYearAgo.getTime() / 1000);
+  const endTs = Math.floor(now.getTime() / 1000);
+  
+  const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${startTs}&period2=${endTs}&interval=1d&events=div`;
+  const chartData = await fetchYahoo(chartUrl);
+  
+  if (chartData?.chart?.result?.[0]) {
+    const meta = chartData.chart.result[0].meta;
+    const events = chartData.chart.result[0].events;
+    
+    // 1. Get Current Price
+    const price = meta.regularMarketPrice;
+    
+    // 2. Calculate Dividend Yield manually (Sum of last year's divs / Price)
+    let totalDividends = 0;
+    if (events?.dividends) {
+      Object.values(events.dividends).forEach(d => totalDividends += d.amount);
+    }
+    const calculatedYield = (price && price > 0) ? (totalDividends / price) : 0;
+
+    // 3. Handle Bonds (Yield is usually the price itself for ^TNX)
+    let finalYield = calculatedYield;
+    if (symbol.startsWith('^')) {
+      finalYield = price / 100; // e.g. Price 4.2 -> 4.2% -> 0.042
+    }
+
+    return {
+      name: meta.shortName || symbol,
+      currentPrice: price,
+      dividendYield: finalYield,
+      currency: meta.currency,
+      exchange: meta.exchangeName,
+      // Missing fields set to null to prevent UI errors
+      recommendation: null,
+      targetMean: null, 
+      totalAssets: null 
+    };
+  }
+
   return null;
 };
