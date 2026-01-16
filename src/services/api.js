@@ -1,26 +1,64 @@
 // PROXY CONFIGURATION
 const VERCEL_PROXY = (url) => `/api/proxy?url=${encodeURIComponent(url)}`;
 
-// Helper: Pause execution (Jitter)
+// Backup Public Proxies (Critical for when Vercel is blocked)
+const PUBLIC_PROXIES = [
+  (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+];
+
+// Helper: Pause execution
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Helper: Smart fetcher
+// Helper: Smart fetcher with robust fallback
 const fetchYahoo = async (yahooUrl, retryCount = 0) => {
+  // STRATEGY A: Try Vercel Proxy
   try {
     const res = await fetch(VERCEL_PROXY(yahooUrl));
+    
     if (res.ok) {
       const text = await res.text();
       if (text.trim().startsWith('{')) return JSON.parse(text);
     }
-    // Only retry on 429 (Rate Limit), NOT 401 (Blocked/Unauthorized)
-    if (res.status === 429 && retryCount < 2) {
-      await wait(2000 * (retryCount + 1));
-      return fetchYahoo(yahooUrl, retryCount + 1);
+    
+    // If blocked (401/429) or Server Error (500), throw to trigger fallback
+    throw new Error(`Vercel proxy failed: ${res.status}`);
+    
+  } catch (localError) {
+    // console.warn('Vercel proxy failed, switching to public proxies...', localError);
+    
+    // STRATEGY B: Try Public Proxies (The Backup Plan)
+    for (const proxyFn of PUBLIC_PROXIES) {
+      try {
+        // Wait a bit before hitting public proxy to be polite
+        if (retryCount > 0) await wait(1000);
+        
+        const res = await fetch(proxyFn(yahooUrl));
+        if (!res.ok) continue;
+        
+        const text = await res.text();
+        
+        // Handle wrappers like AllOrigins
+        let jsonText = text;
+        if (text.includes('"contents"')) {
+           try {
+             const wrapper = JSON.parse(text);
+             if (wrapper.contents) jsonText = wrapper.contents;
+           } catch(e) {}
+        }
+        
+        if (jsonText.trim().startsWith('{')) return JSON.parse(jsonText);
+      } catch (e) { continue; }
     }
-    return null; // Return null on 401/500 so we can trigger fallback
-  } catch (error) {
-    return null;
   }
+  
+  // If all failed, wait and retry Vercel once more if it was a rate limit
+  if (retryCount < 1) {
+    await wait(2000);
+    return fetchYahoo(yahooUrl, retryCount + 1);
+  }
+
+  return null;
 };
 
 // ... [Keep validateSymbolFormat, searchSymbol, fetchQuote unchanged] ...
@@ -50,7 +88,6 @@ export const fetchQuote = async (symbol) => {
     if (searchResult) targetSymbol = searchResult.symbol;
   }
   
-  // Quick chart fetch to validate
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(targetSymbol)}?interval=1d&range=5d`;
   try {
     const data = await fetchYahoo(url);
@@ -94,9 +131,9 @@ export const fetchHistoricalData = async (symbol, start, end) => {
   } catch (err) { throw new Error(err.message || `Could not fetch ${symbol}`); }
 };
 
-// --- NEW HYBRID ANALYST FETCHER ---
+// --- ROBUST HYBRID ANALYST FETCHER ---
 export const fetchAnalystData = async (symbol) => {
-  await wait(1000); // Courtesy delay
+  await wait(1000); 
 
   // STRATEGY 1: Try Rich Data (Often Blocked)
   const t = new Date().getTime();
@@ -105,7 +142,6 @@ export const fetchAnalystData = async (symbol) => {
   const richData = await fetchYahoo(richUrl);
 
   if (richData?.quoteSummary?.result?.[0]) {
-    // ... [Logic to parse rich data if successful - same as before] ...
     const result = richData.quoteSummary.result[0];
     const financial = result.financialData;
     const summary = result.summaryDetail;
@@ -126,11 +162,9 @@ export const fetchAnalystData = async (symbol) => {
     };
   }
 
-  // STRATEGY 2: Fallback to Chart Data (Open)
-  // If Strategy 1 failed (401/429), we calculate yield manually from history
+  // STRATEGY 2: Fallback to Chart Data (Open) via ANY available proxy
   console.log(`Fallback for ${symbol}: Calculating data from Chart API`);
   
-  // Fetch last 365 days to sum dividends
   const now = new Date();
   const oneYearAgo = new Date();
   oneYearAgo.setFullYear(now.getFullYear() - 1);
@@ -144,20 +178,17 @@ export const fetchAnalystData = async (symbol) => {
     const meta = chartData.chart.result[0].meta;
     const events = chartData.chart.result[0].events;
     
-    // 1. Get Current Price
     const price = meta.regularMarketPrice;
     
-    // 2. Calculate Dividend Yield manually (Sum of last year's divs / Price)
     let totalDividends = 0;
     if (events?.dividends) {
       Object.values(events.dividends).forEach(d => totalDividends += d.amount);
     }
     const calculatedYield = (price && price > 0) ? (totalDividends / price) : 0;
 
-    // 3. Handle Bonds (Yield is usually the price itself for ^TNX)
     let finalYield = calculatedYield;
     if (symbol.startsWith('^')) {
-      finalYield = price / 100; // e.g. Price 4.2 -> 4.2% -> 0.042
+      finalYield = price / 100; 
     }
 
     return {
@@ -165,8 +196,6 @@ export const fetchAnalystData = async (symbol) => {
       currentPrice: price,
       dividendYield: finalYield,
       currency: meta.currency,
-      exchange: meta.exchangeName,
-      // Missing fields set to null to prevent UI errors
       recommendation: null,
       targetMean: null, 
       totalAssets: null 
