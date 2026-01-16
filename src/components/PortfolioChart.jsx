@@ -91,9 +91,10 @@ const PortfolioChart = ({ chartData, allSymbols, stocks, theme }) => {
             stroke={theme.textMuted}
             fontSize={11}
             width={45}
+            domain={['auto', 'auto']} // Keep auto-scaling
           />
 
-          {/* RIGHT Axis (Mirrors Left) */}
+          {/* RIGHT Axis (New) */}
           <YAxis 
             yAxisId="primary" 
             orientation="right"
@@ -101,6 +102,7 @@ const PortfolioChart = ({ chartData, allSymbols, stocks, theme }) => {
             stroke={theme.textMuted}
             fontSize={11}
             width={45}
+            domain={['auto', 'auto']} // Must match the left domain
           />
 
           <Tooltip content={<CustomTooltip />} />
