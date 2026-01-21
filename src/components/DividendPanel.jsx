@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { fetchAnalystData } from '../services/api';
+import { fetchDividendInfo, fetchQuote } from '../services/api';
 import { DIVIDEND_LISTS } from '../utils/marketDefaults';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
-// Helper for strict sequential delay
-const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const CACHE_KEY_PREFIX = 'inv_app_div_cache_';
+const CACHE_DURATION = 168 * 60 * 60 * 1000; // 168 hours in milliseconds
 
 const DividendPanel = ({ theme }) => {
   const [targetIncome, setTargetIncome] = useState(1000);
@@ -12,71 +12,113 @@ const DividendPanel = ({ theme }) => {
   const [customSymbol, setCustomSymbol] = useState('');
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(''); // New: Show what's loading
+  const [progress, setProgress] = useState('');
 
   useEffect(() => {
-    loadMarketData(DIVIDEND_LISTS[activeMarket]);
+    loadMarketData(activeMarket);
   }, [activeMarket]);
 
-const loadMarketData = async (symbols) => {
+  // Helper: Get from Cache
+  const getCachedData = (market) => {
+    try {
+      const item = localStorage.getItem(CACHE_KEY_PREFIX + market);
+      if (!item) return null;
+      const parsed = JSON.parse(item);
+      const now = new Date().getTime();
+      if (now - parsed.timestamp < CACHE_DURATION) {
+        return parsed.data;
+      }
+      return null; // Expired
+    } catch (e) { return null; }
+  };
+
+  // Helper: Save to Cache
+  const setCachedData = (market, data) => {
+    try {
+      const item = { timestamp: new Date().getTime(), data };
+      localStorage.setItem(CACHE_KEY_PREFIX + market, JSON.stringify(item));
+    } catch (e) { /* Ignore storage errors */ }
+  };
+
+  const loadMarketData = async (market) => {
+    // 1. Try Cache First
+    const cached = getCachedData(market);
+    if (cached) {
+      setData(cached);
+      return;
+    }
+
+    // 2. Fetch if no cache
     setLoading(true);
-    setData([]); 
+    setData([]);
+    const symbols = DIVIDEND_LISTS[market] || [];
     const results = [];
     
     for (const symbol of symbols) {
       try {
         setProgress(`Loading ${symbol}...`);
-        
-        // 1. Fetch data
-        const info = await fetchAnalystData(symbol);
-        
-        // 2. Extra safety pause: 2 seconds per stock
-        // This ensures the 429/401 error has time to clear on the server
-        await wait(2000); 
-
-        if (info && info.dividendYield) {
-          results.push({
-            symbol: symbol,
-            name: info.name,
-            price: info.currentPrice,
-            yield: info.dividendYield,
-            yieldDisplay: info.dividendYield * 100
-          });
-          setData([...results].sort((a, b) => b.yield - a.yield));
+        const info = await fetchDividendInfo(symbol);
+        if (info) {
+          results.push(info);
+          // Update UI incrementally
+          const sorted = [...results].sort((a, b) => b.yield - a.yield);
+          setData(sorted);
         }
       } catch (e) {
         console.warn(`Failed to fetch ${symbol}`, e);
       }
     }
     
+    // 3. Save to Cache
+    if (results.length > 0) {
+      const finalSorted = results.sort((a, b) => b.yield - a.yield);
+      setCachedData(market, finalSorted);
+    }
+    
     setLoading(false);
     setProgress('');
   };
-  
+
   const addCustomStock = async () => {
-    if (!customSymbol) return;
+    if (!customSymbol.trim()) return;
     setLoading(true);
-    setProgress(`Finding ${customSymbol}...`);
-    const info = await fetchAnalystData(customSymbol.toUpperCase());
-    if (info && info.dividendYield) {
-      const newItem = {
-        symbol: customSymbol.toUpperCase(),
-        name: info.name,
-        price: info.currentPrice,
-        yield: info.dividendYield,
-        yieldDisplay: info.dividendYield * 100
-      };
-      setData(prev => [...prev, newItem].sort((a, b) => b.yield - a.yield));
-      setCustomSymbol('');
+    setProgress(`Looking up ${customSymbol}...`);
+
+    try {
+      // 1. Resolve Symbol (Handle ISINs etc)
+      const quote = await fetchQuote(customSymbol);
+      
+      if (!quote.valid) {
+        alert(`Could not find symbol: ${customSymbol}`);
+        setLoading(false);
+        return;
+      }
+
+      const resolvedSymbol = quote.symbol;
+      setProgress(`Fetching data for ${resolvedSymbol}...`);
+
+      // 2. Fetch Dividend Info
+      const info = await fetchDividendInfo(resolvedSymbol);
+      
+      if (info) {
+        const newData = [...data, info].sort((a, b) => b.yield - a.yield);
+        setData(newData);
+        setCachedData(activeMarket, newData); // Update cache with new stock
+        setCustomSymbol('');
+      } else {
+        alert(`No dividend data found for ${resolvedSymbol}`);
+      }
+    } catch (e) {
+      console.error(e);
     }
+    
     setLoading(false);
     setProgress('');
   };
 
   const calculateInvestmentNeeded = (yieldDecimal) => {
     if (!yieldDecimal || yieldDecimal === 0) return 0;
-    const annualTarget = targetIncome * 12;
-    return annualTarget / yieldDecimal;
+    return (targetIncome * 12) / yieldDecimal;
   };
 
   return (
@@ -138,9 +180,10 @@ const loadMarketData = async (symbols) => {
           </label>
           <div style={{ display: 'flex', gap: '8px' }}>
             <input 
-              placeholder="e.g. MO, BATS.L" 
+              placeholder="Ticker or ISIN" 
               value={customSymbol}
               onChange={e => setCustomSymbol(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addCustomStock()}
               style={{ padding: '8px', borderRadius: '4px', border: `1px solid ${theme.border}`, flex: 1, background: theme.inputBg, color: theme.text }}
             />
             <button 
@@ -154,11 +197,9 @@ const loadMarketData = async (symbols) => {
         </div>
       </div>
 
-      {/* Loading Status */}
       {loading && (
-        <div style={{ marginBottom: '20px', padding: '10px', background: '#E3F2FD', borderRadius: '8px', color: '#1565C0', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span className="spinner">⏳</span> {progress} 
-          <span style={{ fontSize: '12px', opacity: 0.8 }}>(Fetching sequentially to prevent rate limits)</span>
+        <div style={{ marginBottom: '20px', padding: '10px', background: '#E3F2FD', borderRadius: '8px', color: '#1565C0', fontSize: '14px' }}>
+          ⏳ {progress}
         </div>
       )}
 
@@ -206,7 +247,7 @@ const loadMarketData = async (symbols) => {
               <div style={{ width: '120px', textAlign: 'right', borderLeft: `1px solid ${theme.border}`, paddingLeft: '15px' }}>
                 <div style={{ fontSize: '11px', color: theme.textMuted }}>Shares Needed</div>
                 <div style={{ fontSize: '16px', fontWeight: '500' }}>
-                  {Math.ceil(investmentNeeded / item.price).toLocaleString()}
+                  {item.price > 0 ? Math.ceil(investmentNeeded / item.price).toLocaleString() : '-'}
                 </div>
               </div>
             </div>
