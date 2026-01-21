@@ -1,7 +1,7 @@
 // PROXY CONFIGURATION
 const VERCEL_PROXY = (url) => `/api/proxy?url=${encodeURIComponent(url)}`;
 
-// Backup Public Proxies
+// Backup Public Proxies (Critical fallback)
 const PUBLIC_PROXIES = [
   (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
@@ -19,6 +19,7 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
       const text = await res.text();
       if (text.trim().startsWith('{')) return JSON.parse(text);
     }
+    // If rate limited on our own proxy, wait and retry
     if (res.status === 429 && retryCount < 1) {
       await wait(2000);
       return fetchYahoo(yahooUrl, retryCount + 1);
@@ -44,9 +45,14 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
   return null;
 };
 
-// ... [Keep validation logic unchanged] ...
+// --- EXPORTED FUNCTIONS ---
+
 export const validateSymbolFormat = (symbol) => {
-  return /^[A-Z]{2}[A-Z0-9]{9}\d$/.test(symbol) || /^[A-Z]{1,5}$/.test(symbol) || /^\^[A-Z0-9]+$/.test(symbol) || /^[A-Z]+=F$/.test(symbol) || /^[A-Z0-9]+\.[A-Z]+$/.test(symbol);
+  return /^[A-Z]{2}[A-Z0-9]{9}\d$/.test(symbol) || 
+         /^[A-Z]{1,5}$/.test(symbol) || 
+         /^\^[A-Z0-9]+$/.test(symbol) || 
+         /^[A-Z]+=F$/.test(symbol) || 
+         /^[A-Z0-9]+\.[A-Z]+$/.test(symbol);
 };
 
 export const searchSymbol = async (query) => {
@@ -91,7 +97,7 @@ export const fetchHistoricalData = async (symbol, start, end) => {
   })).filter(d => d.price != null);
 };
 
-// --- NEW: FETCH DIVIDEND INFO (Uses Chart API to bypass blocks) ---
+// --- THIS IS THE CRITICAL FUNCTION FOR DIVIDEND/BOND TABS ---
 export const fetchDividendInfo = async (symbol) => {
   await wait(1500); // Rate limit protection
   
@@ -111,12 +117,10 @@ export const fetchDividendInfo = async (symbol) => {
     let yieldVal = 0;
     
     // CASE A: Bond Yields (Indices like ^TNX)
-    // For these, the "Price" is actually the yield (e.g. 4.20 = 4.2%)
     if (symbol.startsWith('^')) {
       yieldVal = price / 100; 
     } 
     // CASE B: Stocks/ETFs
-    // Sum up dividends from the last year
     else if (events?.dividends) {
       const totalDivs = Object.values(events.dividends).reduce((acc, d) => acc + d.amount, 0);
       yieldVal = price ? (totalDivs / price) : 0;
@@ -133,9 +137,35 @@ export const fetchDividendInfo = async (symbol) => {
   return null;
 };
 
-// Keep old function for main dashboard (Growth tab)
+// Reuse fetchDividendInfo for the main dashboard fallback
 export const fetchAnalystData = async (symbol) => {
-  // Reuse the dividend fetcher for the basic data to ensure dashboard loads
+  // Strategy 1: Try Rich Data (often blocked, but worth a shot via proxy)
+  const t = new Date().getTime();
+  const richUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile&t=${t}`;
+  
+  const richData = await fetchYahoo(richUrl);
+
+  if (richData?.quoteSummary?.result?.[0]) {
+    const result = richData.quoteSummary.result[0];
+    const summary = result.summaryDetail;
+    const price = result.price;
+    const keyStats = result.defaultKeyStatistics;
+    
+    return {
+      targetMean: result.financialData?.targetMeanPrice?.raw,
+      currentPrice: result.financialData?.currentPrice?.raw || price?.regularMarketPrice?.raw,
+      recommendation: result.financialData?.recommendationKey,
+      name: price?.shortName || price?.longName,
+      currency: price?.currency,
+      totalAssets: summary?.totalAssets?.raw || result.fundProfile?.totalAssets?.raw,
+      fiftyTwoWeekChange: keyStats?.['52WeekChange']?.raw,
+      ytdReturn: keyStats?.ytdReturn?.raw,
+      dividendYield: summary?.dividendYield?.raw || summary?.yield?.raw,
+      earningsDate: result.calendarEvents?.earnings?.earningsDate?.[0]?.raw ? new Date(result.calendarEvents.earnings.earningsDate[0].raw * 1000).toISOString().split('T')[0] : null
+    };
+  }
+
+  // Strategy 2: Fallback to Chart Data (using the dividend function)
   const basic = await fetchDividendInfo(symbol);
   if (basic) {
     return {
