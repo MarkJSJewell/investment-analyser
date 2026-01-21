@@ -201,6 +201,5 @@ export const fetchAnalystData = async (symbol) => {
       totalAssets: null 
     };
   }
-
   return null;
 };
