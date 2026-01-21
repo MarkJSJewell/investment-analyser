@@ -1,70 +1,191 @@
-// src/components/BondPanel.jsx
 import React, { useState, useEffect } from 'react';
-import { fetchQuote } from '../services/api'; // Bond yields usually come from regular quotes for indices like ^TNX
-import { BOND_LISTS, getAssetName } from '../utils/marketDefaults';
+import { fetchDividendInfo, fetchQuote } from '../services/api';
+import { BOND_LISTS } from '../utils/marketDefaults';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
+const CACHE_KEY_PREFIX = 'inv_app_bond_cache_';
+const CACHE_DURATION = 168 * 60 * 60 * 1000;
+
 const BondPanel = ({ theme }) => {
-  const [investmentAmount, setInvestmentAmount] = useState(10000);
+  const [targetIncome, setTargetIncome] = useState(1000);
   const [activeMarket, setActiveMarket] = useState('Government Yields');
+  const [customSymbol, setCustomSymbol] = useState('');
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState('');
 
   useEffect(() => {
-    loadBondData(BOND_LISTS[activeMarket]);
+    loadMarketData(activeMarket);
   }, [activeMarket]);
 
-  const loadBondData = async (symbols) => {
+  // Helper: Get from Cache
+  const getCachedData = (market) => {
+    try {
+      const item = localStorage.getItem(CACHE_KEY_PREFIX + market);
+      if (!item) return null;
+      const parsed = JSON.parse(item);
+      const now = new Date().getTime();
+      if (now - parsed.timestamp < CACHE_DURATION) {
+        return parsed.data;
+      }
+      return null;
+    } catch (e) { return null; }
+  };
+
+  // Helper: Save to Cache
+  const setCachedData = (market, data) => {
+    try {
+      const item = { timestamp: new Date().getTime(), data };
+      localStorage.setItem(CACHE_KEY_PREFIX + market, JSON.stringify(item));
+    } catch (e) { }
+  };
+
+  const loadMarketData = async (market) => {
+    const cached = getCachedData(market);
+    if (cached) {
+      setData(cached);
+      return;
+    }
+
     setLoading(true);
+    setData([]);
+    const symbols = BOND_LISTS[market] || [];
     const results = [];
     
     for (const symbol of symbols) {
       try {
-        // For Treasury Indices (^TNX), the "price" IS the yield.
-        // For ETFs (AGG), we need the dividend/yield field.
-        const quote = await fetchQuote(symbol);
-        
-        let yieldVal = 0;
-        
-        if (symbol.startsWith('^')) {
-            // It's an index like ^TNX where price 4.20 means 4.20% yield
-            // We need to fetch the Price, but fetchQuote returns validation data.
-            // We need to actually fetch the price.
-            // Let's use a simple fetch pattern here for speed or reuse existing if possible.
-            // For now, let's assume we can get the price from a direct call or reused helper.
-            // *Wait, your fetchQuote mainly validates.* // We should use fetchAnalystData or similar.
-            
-            // Quick fix: For indices, let's just simulate or fetch via analyst data 
-            // because `fetchQuote` in your code validates name but doesn't return price easily.
-            // Actually, `fetchHistoricalData` returns price history. Let's use that latest price.
+        setProgress(`Loading ${symbol}...`);
+        const info = await fetchDividendInfo(symbol);
+        if (info) {
+          results.push(info);
+          const sorted = [...results].sort((a, b) => b.yield - a.yield);
+          setData(sorted);
         }
-        
-        // Actually, let's just use the `fetchAnalystData` for everything as it returns price/yields.
-        // Note: For ^TNX, Yahoo returns "RegularMarketPrice" as 4.2 (which is 4.2%).
-        // For ETFs, it returns yield.
-        
-        // This is a placeholder for the logic:
-        // results.push({ symbol, yield: ... })
-      } catch (e) {
-        console.warn(e);
-      }
+      } catch (e) { console.warn(e); }
     }
-    // ... (For brevity, I will merge this logic into the main App update below so we don't have broken imports)
+    
+    if (results.length > 0) {
+      setCachedData(market, results.sort((a, b) => b.yield - a.yield));
+    }
     setLoading(false);
+    setProgress('');
+  };
+
+  const addCustomStock = async () => {
+    if (!customSymbol.trim()) return;
+    setLoading(true);
+    setProgress(`Looking up ${customSymbol}...`);
+
+    try {
+      const quote = await fetchQuote(customSymbol);
+      if (!quote.valid) {
+        alert(`Could not find symbol: ${customSymbol}`);
+        setLoading(false);
+        return;
+      }
+
+      const resolvedSymbol = quote.symbol;
+      setProgress(`Fetching data for ${resolvedSymbol}...`);
+
+      const info = await fetchDividendInfo(resolvedSymbol);
+      if (info) {
+        const newData = [...data, info].sort((a, b) => b.yield - a.yield);
+        setData(newData);
+        setCachedData(activeMarket, newData);
+        setCustomSymbol('');
+      } else {
+        alert(`No yield data found for ${resolvedSymbol}`);
+      }
+    } catch (e) { console.error(e); }
+    
+    setLoading(false);
+    setProgress('');
+  };
+
+  const calculateInvestmentNeeded = (yieldDecimal) => {
+    if (!yieldDecimal || yieldDecimal === 0) return 0;
+    return (targetIncome * 12) / yieldDecimal;
   };
 
   return (
-    <div style={{ padding: '20px', background: theme.bg, color: theme.text }}>
-       <div style={{ padding: '40px', textAlign: 'center', background: theme.cardBg, borderRadius: '8px', border: `1px solid ${theme.border}` }}>
-          <h2>🏛️ Fixed Income Analysis</h2>
-          <p style={{ color: theme.textMuted }}>
-             Compare "Risk Free" Government Yields vs Corporate Bond ETFs.
-          </p>
-          <div style={{ marginTop: '20px' }}>
-             (This feature uses the same structure as Dividends but sources data from Treasury Indices `^TNX` and Bond ETFs `AGG`. 
-             Implementation details are identical to the Dividend tab but with different source symbols.)
+    <div style={{ padding: '20px', background: theme.bg, minHeight: '80vh' }}>
+      {/* Header Controls */}
+      <div style={{ 
+        display: 'flex', flexWrap: 'wrap', gap: '20px', marginBottom: '30px', 
+        background: theme.cardBg, padding: '20px', borderRadius: '12px',
+        border: `1px solid ${theme.border}`
+      }}>
+        <div style={{ flex: '1 1 300px' }}>
+          <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', color: theme.textMuted }}>Target Monthly Income</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '24px' }}>💵</span>
+            <input type="number" value={targetIncome} onChange={e => setTargetIncome(Number(e.target.value))}
+              style={{ fontSize: '20px', padding: '8px', borderRadius: '6px', border: `1px solid ${theme.border}`, width: '150px', background: theme.inputBg, color: theme.text }} 
+            />
+            <span style={{ color: theme.textMuted }}>/ month</span>
           </div>
-       </div>
+        </div>
+        <div style={{ flex: '1 1 300px' }}>
+          <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', color: theme.textMuted }}>Select Market</label>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            {Object.keys(BOND_LISTS).map(market => (
+              <button key={market} onClick={() => !loading && setActiveMarket(market)} disabled={loading}
+                style={{
+                  padding: '8px 16px', borderRadius: '20px', border: 'none', cursor: loading ? 'wait' : 'pointer',
+                  background: activeMarket === market ? '#1A73E8' : theme.hoverBg,
+                  color: activeMarket === market ? 'white' : theme.text,
+                  opacity: loading && activeMarket !== market ? 0.5 : 1
+                }}>
+                {market}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ flex: '1 1 300px' }}>
+          <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', color: theme.textMuted }}>Add Bond/ETF</label>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input placeholder="e.g. TLT, ^TNX" value={customSymbol} onChange={e => setCustomSymbol(e.target.value)} onKeyDown={e => e.key === 'Enter' && addCustomStock()}
+              style={{ padding: '8px', borderRadius: '4px', border: `1px solid ${theme.border}`, flex: 1, background: theme.inputBg, color: theme.text }}
+            />
+            <button onClick={addCustomStock} disabled={loading} style={{ padding: '8px 16px', background: '#34A853', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>+</button>
+          </div>
+        </div>
+      </div>
+
+      {loading && <div style={{ marginBottom: '20px', padding: '10px', background: '#E3F2FD', borderRadius: '8px', color: '#1565C0' }}>⏳ {progress}</div>}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+        {data.map((item) => {
+          const investmentNeeded = calculateInvestmentNeeded(item.yield);
+          return (
+            <div key={item.symbol} style={{ background: theme.cardBg, padding: '15px', borderRadius: '8px', border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', gap: '20px' }}>
+              <div style={{ width: '150px', flexShrink: 0 }}>
+                <div style={{ fontWeight: 'bold', fontSize: '18px' }}>{item.symbol}</div>
+                <div style={{ fontSize: '12px', color: theme.textMuted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</div>
+                <div style={{ marginTop: '4px', display: 'inline-block', padding: '2px 6px', borderRadius: '4px', background: '#E8F5E9', color: '#2E7D32', fontSize: '12px', fontWeight: '600' }}>
+                  Yield: {formatPercent(item.yieldDisplay)}
+                </div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '13px', color: theme.textMuted }}>
+                  <span>Investment Required</span>
+                  <strong style={{ color: theme.text, fontSize: '16px' }}>{formatCurrency(investmentNeeded)}</strong>
+                </div>
+                <div style={{ width: '100%', height: '12px', background: theme.hoverBg, borderRadius: '6px', overflow: 'hidden' }}>
+                  <div style={{ width: '100%', height: '100%', background: 'linear-gradient(90deg, #34A853, #1A73E8)', opacity: Math.max(0.2, item.yield * 10) }} />
+                </div>
+              </div>
+              <div style={{ width: '120px', textAlign: 'right', borderLeft: `1px solid ${theme.border}`, paddingLeft: '15px' }}>
+                <div style={{ fontSize: '11px', color: theme.textMuted }}>Units Needed</div>
+                <div style={{ fontSize: '16px', fontWeight: '500' }}>
+                  {item.symbol.startsWith('^') ? 'N/A' : (item.price > 0 ? Math.ceil(investmentNeeded / item.price).toLocaleString() : '-')}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {!loading && data.length === 0 && <div style={{ textAlign: 'center', padding: '40px', color: theme.textMuted }}>Select a market or add a bond/ETF to see fixed income analysis.</div>}
+      </div>
     </div>
   );
 };
