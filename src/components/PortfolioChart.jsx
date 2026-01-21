@@ -84,27 +84,27 @@ const PortfolioChart = ({ chartData, allSymbols, stocks, theme }) => {
             minTickGap={30}
           />
           
-          {/* LEFT Axis */}
+{/* LEFT Y-Axis */}
           <YAxis 
             yAxisId="primary"
             tickFormatter={(val) => val >= 1000 ? `$${(val / 1000).toFixed(1)}k` : `$${val}`}
             stroke={theme.textMuted}
             fontSize={11}
             width={45}
-            domain={['auto', 'auto']} // Keep auto-scaling
+            domain={['auto', 'auto']}
           />
 
-          {/* RIGHT Axis (New) */}
+          {/* RIGHT Y-Axis (New) */}
           <YAxis 
-            yAxisId="primary" 
+            yAxisId="primary" // Mirrors the same ID so scales match
             orientation="right"
             tickFormatter={(val) => val >= 1000 ? `$${(val / 1000).toFixed(1)}k` : `$${val}`}
             stroke={theme.textMuted}
             fontSize={11}
             width={45}
-            domain={['auto', 'auto']} // Must match the left domain
+            domain={['auto', 'auto']}
           />
-
+  
           <Tooltip content={<CustomTooltip />} />
           <Legend wrapperStyle={{ paddingTop: '10px' }} />
 
