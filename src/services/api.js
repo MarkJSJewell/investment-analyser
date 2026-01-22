@@ -135,4 +135,90 @@ export const fetchScreener = async (scrId = 'day_gainers', count = 25) => {
   const url = `https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=${scrId}&count=${count}`;
   try {
     const data = await fetchYahoo(url);
-    if (!data?.finance?.result?.[0]?.quotes) return null
+    if (!data?.finance?.result?.[0]?.quotes) return null;
+    return data.finance.result[0].quotes.map(q => ({
+      symbol: q.symbol,
+      name: q.shortName || q.longName,
+      price: q.regularMarketPrice,
+      changePercent: q.regularMarketChangePercent,
+      volume: q.regularMarketVolume,
+      marketCap: q.marketCap
+    }));
+  } catch (e) {
+    console.warn('Screener fetch failed:', e);
+    return null;
+  }
+};
+
+// --- DIVIDEND INFO (Required for Dividend/Bond Tabs) ---
+export const fetchDividendInfo = async (symbol) => {
+  await wait(1500); 
+  
+  const end = Math.floor(Date.now() / 1000);
+  const start = end - 31536000; 
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${start}&period2=${end}&interval=1d&events=div`;
+  
+  const data = await fetchYahoo(url);
+  
+  if (data?.chart?.result?.[0]) {
+    const meta = data.chart.result[0].meta;
+    const events = data.chart.result[0].events;
+    const price = meta.regularMarketPrice;
+    
+    let yieldVal = 0;
+    if (symbol.startsWith('^')) {
+      yieldVal = price / 100; 
+    } else if (events?.dividends) {
+      const totalDivs = Object.values(events.dividends).reduce((acc, d) => acc + d.amount, 0);
+      yieldVal = price ? (totalDivs / price) : 0;
+    }
+
+    return {
+      symbol: meta.symbol,
+      name: meta.shortName || meta.longName || symbol,
+      price: price,
+      yield: yieldVal,
+      yieldDisplay: yieldVal * 100
+    };
+  }
+  return null;
+};
+
+// --- ANALYST DATA (With Safety Net Fallback) ---
+export const fetchAnalystData = async (symbol) => {
+  const t = new Date().getTime();
+  const richUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile&t=${t}`;
+  
+  const richData = await fetchYahoo(richUrl);
+
+  if (richData?.quoteSummary?.result?.[0]) {
+    const result = richData.quoteSummary.result[0];
+    const summary = result.summaryDetail;
+    const price = result.price;
+    const keyStats = result.defaultKeyStatistics;
+    
+    return {
+      targetMean: result.financialData?.targetMeanPrice?.raw,
+      currentPrice: result.financialData?.currentPrice?.raw || price?.regularMarketPrice?.raw,
+      recommendation: result.financialData?.recommendationKey,
+      name: price?.shortName || price?.longName,
+      currency: price?.currency,
+      totalAssets: summary?.totalAssets?.raw || result.fundProfile?.totalAssets?.raw,
+      fiftyTwoWeekChange: keyStats?.['52WeekChange']?.raw,
+      ytdReturn: keyStats?.ytdReturn?.raw,
+      dividendYield: summary?.dividendYield?.raw || summary?.yield?.raw,
+      earningsDate: result.calendarEvents?.earnings?.earningsDate?.[0]?.raw ? new Date(result.calendarEvents.earnings.earningsDate[0].raw * 1000).toISOString().split('T')[0] : null
+    };
+  }
+
+  // Fallback (This is the critical block you asked about)
+  const basic = await fetchDividendInfo(symbol);
+  if (basic) {
+    return {
+      ...basic,
+      currentPrice: basic.price,
+      dividendYield: basic.yield
+    };
+  }
+  return null;
+};
