@@ -165,6 +165,45 @@ export const fetchAnalystData = async (symbol) => {
     };
   }
 
+  // --- NEW: BATCH FETCHER FOR SCANNER (Prevents Rate Limits) ---
+// Fetches simplified history for MULTIPLE symbols in ONE request
+export const fetchSparkData = async (symbols, range = '1mo') => {
+  // Join symbols (e.g., "AAPL,MSFT,GOOG")
+  const symbolStr = symbols.join(',');
+  const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(symbolStr)}&range=${range}&interval=1d`;
+  
+  try {
+    const data = await fetchYahoo(url);
+    if (!data?.spark?.result) return null;
+    
+    // Parse the spark response
+    const results = data.spark.result.map(item => {
+      const response = item.response[0];
+      const meta = response.meta;
+      const quotes = response.indicators?.quote?.[0]?.close || [];
+      const timestamps = response.timestamp || [];
+      
+      // Filter out nulls
+      const history = timestamps.map((t, i) => ({
+        date: new Date(t * 1000).toISOString().split('T')[0],
+        price: quotes[i]
+      })).filter(d => d.price != null);
+
+      return {
+        symbol: item.symbol,
+        name: meta.shortName || meta.longName || item.symbol, // Spark sometimes lacks full names, but usually has shortName
+        currentPrice: meta.regularMarketPrice,
+        history
+      };
+    });
+    
+    return results;
+  } catch (e) {
+    console.warn('Spark fetch failed:', e);
+    return null;
+  }
+};
+  
   // Strategy 2: Fallback to Chart Data (using the dividend function)
   const basic = await fetchDividendInfo(symbol);
   if (basic) {
