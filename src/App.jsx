@@ -167,4 +167,92 @@ function App() {
               <TabButton id="growth" icon="🚀" label="Growth & Returns" />
               <TabButton id="dividends" icon="💰" label="Dividend Income" />
               <TabButton id="bonds" icon="🏛️" label="Fixed Income" />
-              <TabButton id="movers" icon="⚡"
+              <TabButton id="movers" icon="⚡" label="Top Movers" />
+              <TabButton id="timer" icon="⏱️" label="Perfect Timer" />
+            </div>
+            
+            <button onClick={() => setDarkMode(!darkMode)} style={{ background: darkMode ? '#333' : '#f0f0f0', border: 'none', borderRadius: '20px', padding: '8px 16px', cursor: 'pointer', fontSize: '14px', color: theme.text }}>
+              {darkMode ? '☀️' : '🌙'}
+            </button>
+          </div>
+        </header>
+
+        <main style={{ maxWidth: '1900px', margin: '0 auto', padding: '0', boxSizing: 'border-box' }}>
+          
+          {/* TAB 1: GROWTH */}
+          {activeTab === 'growth' && (
+             <div style={{ padding: '20px', display: 'grid', gridTemplateColumns: results ? (sidebarCollapsed ? '50px 1fr 320px' : '400px 1fr 320px') : '1fr', gap: '20px', alignItems: 'start' }}>
+                <div style={{ background: theme.cardBg, borderRadius: '8px', border: `1px solid ${theme.border}`, position: results ? 'sticky' : 'static', top: '20px', display: 'flex', flexDirection: 'column', maxHeight: results ? 'calc(100vh - 40px)' : 'none', overflow: 'hidden' }}>
+                  {results && (
+                    <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)} style={{ width: '100%', padding: '8px', background: theme.hoverBg, border: 'none', borderBottom: `1px solid ${theme.border}`, cursor: 'pointer', fontSize: '12px', color: theme.textMuted }}>{sidebarCollapsed ? '▶' : '◀ Collapse'}</button>
+                  )}
+                  {!sidebarCollapsed && (
+                    <div style={{ padding: '20px', overflowY: 'auto', flex: '1 1 auto', minHeight: 0 }}>
+                      <StockInput stocks={stocks} onUpdate={updateStock} onRemove={removeStock} onAdd={addStock} onValidate={validateStock} theme={theme} />
+                      <div style={{ marginTop: '20px' }}>
+                        <label style={{ display: 'block', fontWeight: '500', marginBottom: '8px', fontSize: '14px' }}>Date Range</label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} min="1990-01-01" max={endDate} style={inputStyle} />
+                          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} min={startDate} style={inputStyle} />
+                        </div>
+                      </div>
+                      <div style={{ marginTop: '16px' }}>
+                        <div className="toggle-container" style={{ fontSize: '12px' }}>
+                          <button className={`toggle-btn ${investmentMode === 'monthly' ? 'active' : ''}`} onClick={() => setInvestmentMode('monthly')} style={{ padding: '6px 12px' }}>Monthly (DCA)</button>
+                          <button className={`toggle-btn ${investmentMode === 'oneoff' ? 'active' : ''}`} onClick={() => setInvestmentMode('oneoff')} style={{ padding: '6px 12px' }}>One-off</button>
+                        </div>
+                      </div>
+                      <div style={{ marginTop: '16px' }}>
+                        <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: theme.textMuted }}>Amount (USD)</label>
+                        <input type="number" value={investmentAmount} onChange={e => setInvestmentAmount(Number(e.target.value))} style={inputStyle} />
+                      </div>
+                      <div style={{ marginTop: '12px' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px' }}>
+                          <input type="checkbox" checked={reinvestDividends} onChange={(e) => setReinvestDividends(e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#1A73E8' }} />
+                          <span>💰 Reinvest dividends (DRIP)</span>
+                        </label>
+                      </div>
+                      <ComparisonSelector selectedIndexes={selectedIndexes} selectedCommodities={selectedCommodities} selectedCrypto={selectedCrypto} selectedBonds={selectedBonds} onToggleIndex={toggleIndex} onToggleCommodity={toggleCommodity} onToggleCrypto={toggleCrypto} onToggleBond={toggleBond} />
+                      {error && <div style={{ marginTop: '12px', padding: '10px', background: '#FFEBEE', borderRadius: '4px', color: '#C62828', fontSize: '12px' }}>⚠️ {error}</div>}
+                    </div>
+                  )}
+                  <div style={{ padding: '16px', borderTop: `1px solid ${theme.border}`, background: theme.cardBg }}>
+                    <button onClick={runAnalysis} disabled={loading} style={{ width: '100%', background: '#1A73E8', color: 'white', padding: '12px', borderRadius: '4px', border: 'none', cursor: 'pointer', opacity: loading ? 0.7 : 1 }}>{loading ? 'Analyzing...' : 'Calculate Returns'}</button>
+                  </div>
+                </div>
+
+                {results ? (
+                  <div style={{ minWidth: 0 }}>
+                    <PortfolioChart chartData={results.chartData} allSymbols={results.allSymbols} stocks={stocks} theme={theme} />
+                    <SummaryTable allSymbols={results.allSymbols} analysis={results.analysis} stocks={stocks} analystData={analystData} loadingAnalyst={loadingAnalyst} theme={theme} />
+                    {selectedIndexes.length > 0 && <IndexConstituents selectedIndexes={selectedIndexes} startDate={startDate} endDate={endDate} theme={theme} />}
+                    <PredictionsCard symbols={results.allSymbols} stocks={stocks} theme={theme} />
+                  </div>
+                ) : (
+                  <div style={{ background: darkMode ? '#1e3a5f' : '#E3F2FD', borderRadius: '8px', padding: '20px', maxWidth: '600px' }}>
+                    <strong>ℹ️ Growth Mode</strong>
+                    <p style={{ marginTop: '8px', fontSize: '13px' }}>Calculate Historical Return on Investment (ROI) and DCA strategies.</p>
+                  </div>
+                )}
+
+                {results && (
+                  <div style={{ position: 'sticky', top: '20px', height: 'fit-content', maxHeight: 'calc(100vh - 40px)', overflowY: 'auto' }}>
+                    <NewsPanel symbols={results.allSymbols} stocks={stocks} theme={theme} />
+                  </div>
+                )}
+             </div>
+          )}
+
+          {/* OTHER TABS */}
+          {activeTab === 'dividends' && <DividendPanel theme={theme} />}
+          {activeTab === 'bonds' && <BondPanel theme={theme} />}
+          {activeTab === 'movers' && <MarketScanner theme={theme} userStocks={stocks} />}
+          {activeTab === 'timer' && <TradeAnalyzer theme={theme} />}
+
+        </main>
+      </div>
+    </ThemeContext.Provider>
+  );
+}
+
+export default App;
