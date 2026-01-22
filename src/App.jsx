@@ -10,6 +10,8 @@ import DividendPanel from './components/DividendPanel'; // NEW COMPONENT
 import BondPanel from './components/BondPanel'; // NEW COMPONENT
 import { fetchQuote, fetchHistoricalData, fetchAnalystData } from './services/api';
 import { calculateDCA, buildChartData } from './utils/calculations';
+import MarketScanner from './components/MarketScanner'; // New
+import TradeAnalyzer from './components/TradeAnalyzer'; // New
 
 // Theme Context
 export const ThemeContext = createContext();
@@ -143,59 +145,73 @@ function App() {
               <TabButton id="dividends" icon="💰" label="Dividend Income" />
               <TabButton id="bonds" icon="🏛️" label="Fixed Income" />
             </div>
-            
+  
+            <div style={{ display: 'flex', height: '100%' }}>
+              <TabButton id="growth" icon="🚀" label="Growth" />
+              <TabButton id="dividends" icon="💰" label="Dividends" />
+              <TabButton id="bonds" icon="🏛️" label="Bonds" />
+              {/* NEW TABS */}
+              <TabButton id="movers" icon="⚡" label="Top Movers" />
+              <TabButton id="timer" icon="⏱️" label="Perfect Timer" />
+            </div>            
+
             <div style={{ width: '100px' }}></div> {/* Spacer to balance header */}
           </div>
         </header>
 
-        <main style={{ width: '100%', padding: '0', boxSizing: 'border-box' }}>
+<main style={{ maxWidth: '1900px', margin: '0 auto', padding: '0', boxSizing: 'border-box' }}>
           
-          {/* VIEW: GROWTH (Original Dashboard) */}
+          {/* --- TAB 1: GROWTH (Complex Layout) --- */}
           {activeTab === 'growth' && (
              <div style={{ padding: '20px', display: 'grid', gridTemplateColumns: results ? (sidebarCollapsed ? '50px 1fr 320px' : '400px 1fr 320px') : '1fr', gap: '20px', alignItems: 'start' }}>
-                {/* ... (Existing Sidebar Code) ... */}
+                
+                {/* 1. Sidebar (Only for Growth Tab) */}
                 <div style={{ background: theme.cardBg, borderRadius: '8px', border: `1px solid ${theme.border}`, position: results ? 'sticky' : 'static', top: '20px', display: 'flex', flexDirection: 'column', maxHeight: results ? 'calc(100vh - 40px)' : 'none', overflow: 'hidden' }}>
                   {results && (
                     <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)} style={{ width: '100%', padding: '8px', background: theme.hoverBg, border: 'none', borderBottom: `1px solid ${theme.border}`, cursor: 'pointer', fontSize: '12px', color: theme.textMuted }}>{sidebarCollapsed ? '▶' : '◀ Collapse'}</button>
                   )}
+                  
                   {!sidebarCollapsed && (
                     <div style={{ padding: '20px', overflowY: 'auto', flex: '1 1 auto', minHeight: 0 }}>
                       <StockInput stocks={stocks} onUpdate={updateStock} onRemove={removeStock} onAdd={addStock} onValidate={validateStock} theme={theme} />
+                      {/* ... Date Range, Amount Inputs, etc ... */}
                       <div style={{ marginTop: '20px' }}>
                         <label style={{ display: 'block', fontWeight: '500', marginBottom: '8px', fontSize: '14px' }}>Date Range</label>
                         <div style={{ display: 'flex', gap: '8px' }}>
-                          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} min="1990-01-01" max={endDate} style={{ padding: '8px', border: `1px solid ${theme.border}`, borderRadius: '4px', width: '100%' }} />
-                          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} min={startDate} style={{ padding: '8px', border: `1px solid ${theme.border}`, borderRadius: '4px', width: '100%' }} />
+                          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} min="1990-01-01" max={endDate} style={inputStyle} />
+                          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} min={startDate} style={inputStyle} />
                         </div>
                       </div>
-                      {/* ... (Rest of inputs: Investment Type, Amount, DRIP, Compare) ... */}
+                      
                       <div style={{ marginTop: '16px' }}>
-                        <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: theme.textMuted }}>Amount</label>
-                        <input type="number" value={investmentAmount} onChange={e => setInvestmentAmount(Number(e.target.value))} style={{ padding: '8px', border: `1px solid ${theme.border}`, width: '100%' }} />
+                        <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: theme.textMuted }}>Amount (USD)</label>
+                        <input type="number" value={investmentAmount} onChange={e => setInvestmentAmount(Number(e.target.value))} style={inputStyle} />
                       </div>
+
                       <ComparisonSelector selectedIndexes={selectedIndexes} selectedCommodities={selectedCommodities} selectedCrypto={selectedCrypto} selectedBonds={selectedBonds} onToggleIndex={toggleIndex} onToggleCommodity={toggleCommodity} onToggleCrypto={toggleCrypto} onToggleBond={toggleBond} />
                     </div>
                   )}
+                  
                   <div style={{ padding: '16px', borderTop: `1px solid ${theme.border}`, background: theme.cardBg }}>
                     <button onClick={runAnalysis} disabled={loading} style={{ width: '100%', background: '#1A73E8', color: 'white', padding: '12px', borderRadius: '4px', border: 'none', cursor: 'pointer', opacity: loading ? 0.7 : 1 }}>{loading ? 'Analyzing...' : 'Calculate Returns'}</button>
                   </div>
                 </div>
 
-                {/* Growth Results Area */}
+                {/* 2. Middle Results Area */}
                 {results ? (
                   <div style={{ minWidth: 0 }}>
                     <PortfolioChart chartData={results.chartData} allSymbols={results.allSymbols} stocks={stocks} theme={theme} />
                     <SummaryTable allSymbols={results.allSymbols} analysis={results.analysis} stocks={stocks} analystData={analystData} loadingAnalyst={loadingAnalyst} theme={theme} />
-                    {selectedIndexes.length > 0 && <IndexConstituents selectedIndexes={selectedIndexes} startDate={startDate} endDate={endDate} theme={theme} />}
                     <PredictionsCard symbols={results.allSymbols} stocks={stocks} theme={theme} />
                   </div>
                 ) : (
-                  <div style={{ background: '#E3F2FD', borderRadius: '8px', padding: '20px', maxWidth: '600px' }}>
+                  <div style={{ background: darkMode ? '#1e3a5f' : '#E3F2FD', borderRadius: '8px', padding: '20px', maxWidth: '600px' }}>
                     <strong>ℹ️ Growth Mode</strong>
                     <p style={{ marginTop: '8px', fontSize: '13px' }}>Calculate Historical Return on Investment (ROI) and DCA strategies.</p>
                   </div>
                 )}
 
+                {/* 3. Right News Panel */}
                 {results && (
                   <div style={{ position: 'sticky', top: '20px', height: 'fit-content', maxHeight: 'calc(100vh - 40px)', overflowY: 'auto' }}>
                     <NewsPanel symbols={results.allSymbols} stocks={stocks} theme={theme} />
@@ -204,11 +220,11 @@ function App() {
              </div>
           )}
 
-          {/* VIEW: DIVIDENDS */}
+          {/* --- OTHER TABS (Siblings to Growth, NOT children) --- */}
           {activeTab === 'dividends' && <DividendPanel theme={theme} />}
-
-          {/* VIEW: BONDS */}
           {activeTab === 'bonds' && <BondPanel theme={theme} />}
+          {activeTab === 'movers' && <MarketScanner theme={theme} userStocks={stocks} />}
+          {activeTab === 'timer' && <TradeAnalyzer theme={theme} />}
 
         </main>
       </div>
