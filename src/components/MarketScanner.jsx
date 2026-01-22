@@ -1,17 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { fetchSparkData } from '../services/api';
 import { formatPercent, formatCurrency } from '../utils/formatters';
 import NewsPanel from './NewsPanel';
 
 // Hardcoded candidates to scan (Mix of Tech, Finance, Crypto-related, Autos)
 const SCAN_CANDIDATES = [
-  'AAPL', 'MSFT', 'GOOG', 'AMZN', 'NVDA', 'TSLA', 'META', 'NFLX', 'AMD', 'INTC', // Big Tech
-  'JPM', 'BAC', 'GS', 'V', 'MA', // Finance
-  'DIS', 'NKE', 'KO', 'PEP', 'WMT', 'COST', // Consumer
-  'PLTR', 'COIN', 'MSTR', 'RIOT', 'MARA', // Crypto/AI High Volatility
-  'PFE', 'LLY', 'JNJ', 'UNH', // Pharma
-  'F', 'GM', 'TM' // Auto
+  'AAPL', 'MSFT', 'GOOG', 'AMZN', 'NVDA', 'TSLA', 'META', 'NFLX', 'AMD', 'INTC',
+  'JPM', 'BAC', 'GS', 'V', 'MA', 
+  'DIS', 'NKE', 'KO', 'PEP', 'WMT', 'COST',
+  'PLTR', 'COIN', 'MSTR', 'RIOT', 'MARA', 
+  'PFE', 'LLY', 'JNJ', 'UNH', 
+  'F', 'GM', 'TM'
 ];
+
+// Helper to split array into chunks
+const chunkArray = (arr, size) => {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+};
 
 const MarketScanner = ({ theme, userStocks }) => {
   const [days, setDays] = useState(7);
@@ -19,37 +28,43 @@ const MarketScanner = ({ theme, userStocks }) => {
   const [limit, setLimit] = useState(10);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [selectedStock, setSelectedStock] = useState(null); // For News
+  const [selectedStock, setSelectedStock] = useState(null); 
 
   const runScan = async () => {
     setLoading(true);
     setResults([]);
     setSelectedStock(null);
 
-    // Merge defaults with user's current watchlist
+    // 1. Prepare unique symbol list
     const userSymbols = userStocks.map(s => s.symbol).filter(s => s);
     const uniqueSymbols = [...new Set([...SCAN_CANDIDATES, ...userSymbols])];
 
-    // Range needs to cover the days requested. 
-    // Yahoo "range" options: 1d, 5d, 1mo, 3mo, 1y.
-    // If user wants 7 days, we fetch '1mo' and slice locally.
+    // 2. Determine Range
     const range = days <= 5 ? '5d' : (days <= 25 ? '1mo' : '3mo');
 
     try {
-      // 1. Fetch Spark Data (Batch)
-      const batchData = await fetchSparkData(uniqueSymbols, range);
-      
-      if (!batchData) throw new Error('Failed to fetch market data');
+      // 3. Batch Request in Chunks of 10 (Fixes 429/400 errors)
+      const chunks = chunkArray(uniqueSymbols, 10);
+      let allBatchData = [];
 
-      // 2. Process & Filter
-      const processed = batchData.map(item => {
+      for (const chunk of chunks) {
+        // Fetch each chunk sequentially to be polite
+        const chunkData = await fetchSparkData(chunk, range);
+        if (chunkData) {
+          allBatchData = [...allBatchData, ...chunkData];
+        }
+      }
+      
+      if (allBatchData.length === 0) throw new Error('Failed to fetch market data');
+
+      // 4. Process & Filter
+      const processed = allBatchData.map(item => {
         const history = item.history;
         if (!history || history.length < 2) return null;
 
         const current = history[history.length - 1];
         
         // Find the price "N days ago"
-        // We look backwards from the end
         const lookbackIndex = Math.max(0, history.length - 1 - days);
         const start = history[lookbackIndex];
         
@@ -67,11 +82,11 @@ const MarketScanner = ({ theme, userStocks }) => {
         };
       }).filter(item => item && item.growth >= threshold);
 
-      // 3. Sort by Growth (Desc) and Limit
+      // 5. Sort & Limit
       const topMovers = processed.sort((a, b) => b.growth - a.growth).slice(0, limit);
       
       setResults(topMovers);
-      if (topMovers.length > 0) setSelectedStock(topMovers[0].symbol); // Auto-select top for news
+      if (topMovers.length > 0) setSelectedStock(topMovers[0].symbol);
 
     } catch (e) {
       console.error(e);
