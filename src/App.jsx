@@ -12,6 +12,7 @@ import MarketScanner from './components/MarketScanner';
 import TradeAnalyzer from './components/TradeAnalyzer';
 import { fetchQuote, fetchHistoricalData, fetchAnalystData } from './services/api';
 import { calculateDCA, buildChartData } from './utils/calculations';
+import DerivativesPanel from './components/DerivativesPanel';
 
 export const ThemeContext = createContext();
 export const useTheme = () => useContext(ThemeContext);
@@ -169,6 +170,7 @@ function App() {
               <TabButton id="bonds" icon="🏛️" label="Fixed Income" />
               <TabButton id="movers" icon="⚡" label="Top Movers" />
               <TabButton id="timer" icon="⏱️" label="Perfect Timer" />
+              <TabButton id="derivatives" icon="📊" label="F&O" />
             </div>
             
             <button onClick={() => setDarkMode(!darkMode)} style={{ background: darkMode ? '#333' : '#f0f0f0', border: 'none', borderRadius: '20px', padding: '8px 16px', cursor: 'pointer', fontSize: '14px', color: theme.text }}>
@@ -248,6 +250,7 @@ function App() {
           {activeTab === 'bonds' && <BondPanel theme={theme} />}
           {activeTab === 'movers' && <MarketScanner theme={theme} userStocks={stocks} />}
           {activeTab === 'timer' && <TradeAnalyzer theme={theme} />}
+          {activeTab === 'derivatives' && <DerivativesPanel theme={theme} />}
 
         </main>
       </div>
