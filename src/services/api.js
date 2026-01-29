@@ -19,22 +19,20 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
       const text = await res.text();
       if (text.trim().startsWith('{')) return JSON.parse(text);
     }
-    // If rate limited on our own proxy, wait and retry
     if (res.status === 429 && retryCount < 1) {
       await wait(2000);
       return fetchYahoo(yahooUrl, retryCount + 1);
     }
-  } catch (e) { /* Ignore and try fallback */ }
+  } catch (e) { /* Ignore */ }
 
   // 2. Try Public Proxies (Fallback)
   for (const proxyFn of PUBLIC_PROXIES) {
     try {
-      await wait(1000); // Courtesy delay
+      await wait(1000); 
       const res = await fetch(proxyFn(yahooUrl));
       if (res.ok) {
         const text = await res.text();
         let jsonText = text;
-        // Handle allorigins wrapper
         if (text.includes('"contents"')) {
            try { const wrapper = JSON.parse(text); if (wrapper.contents) jsonText = wrapper.contents; } catch(e) {}
         }
@@ -97,7 +95,7 @@ export const fetchHistoricalData = async (symbol, start, end) => {
   })).filter(d => d.price != null);
 };
 
-// --- NEW: SPARK DATA (Helper for batching) ---
+// --- SPARK DATA (For Futures & Top Movers) ---
 export const fetchSparkData = async (symbols, range = '1mo') => {
   const symbolStr = symbols.join(',');
   const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(symbolStr)}&range=${range}&interval=1d`;
@@ -105,32 +103,18 @@ export const fetchSparkData = async (symbols, range = '1mo') => {
   try {
     const data = await fetchYahoo(url);
     if (!data?.spark?.result) return null;
-    
     return data.spark.result.map(item => {
       const response = item.response[0];
       const meta = response.meta;
       const quotes = response.indicators?.quote?.[0]?.close || [];
       const timestamps = response.timestamp || [];
-      
-      const history = timestamps.map((t, i) => ({
-        date: new Date(t * 1000).toISOString().split('T')[0],
-        price: quotes[i]
-      })).filter(d => d.price != null);
-
-      return {
-        symbol: item.symbol,
-        name: meta.shortName || meta.longName || item.symbol,
-        currentPrice: meta.regularMarketPrice,
-        history
-      };
+      const history = timestamps.map((t, i) => ({ date: new Date(t * 1000).toISOString().split('T')[0], price: quotes[i] })).filter(d => d.price != null);
+      return { symbol: item.symbol, name: meta.shortName || meta.longName || item.symbol, currentPrice: meta.regularMarketPrice, history };
     });
-  } catch (e) {
-    console.warn('Spark fetch failed:', e);
-    return null;
-  }
+  } catch (e) { return null; }
 };
 
-// --- NEW: MARKET SCREENER (For the "Whole Market" Scanner) ---
+// --- MARKET SCREENER (For "Whole Market" Scanner) ---
 export const fetchScreener = async (scrId = 'day_gainers', count = 25) => {
   const url = `https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=${scrId}&count=${count}`;
   try {
@@ -144,47 +128,33 @@ export const fetchScreener = async (scrId = 'day_gainers', count = 25) => {
       volume: q.regularMarketVolume,
       marketCap: q.marketCap
     }));
-  } catch (e) {
-    console.warn('Screener fetch failed:', e);
-    return null;
-  }
+  } catch (e) { return null; }
 };
 
-// --- DIVIDEND INFO (Required for Dividend/Bond Tabs) ---
+// --- DIVIDEND INFO (Chart Fallback) ---
 export const fetchDividendInfo = async (symbol) => {
   await wait(1500); 
-  
   const end = Math.floor(Date.now() / 1000);
   const start = end - 31536000; 
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${start}&period2=${end}&interval=1d&events=div`;
   
   const data = await fetchYahoo(url);
-  
   if (data?.chart?.result?.[0]) {
     const meta = data.chart.result[0].meta;
     const events = data.chart.result[0].events;
     const price = meta.regularMarketPrice;
-    
     let yieldVal = 0;
-    if (symbol.startsWith('^')) {
-      yieldVal = price / 100; 
-    } else if (events?.dividends) {
+    if (symbol.startsWith('^')) { yieldVal = price / 100; } 
+    else if (events?.dividends) {
       const totalDivs = Object.values(events.dividends).reduce((acc, d) => acc + d.amount, 0);
       yieldVal = price ? (totalDivs / price) : 0;
     }
-
-    return {
-      symbol: meta.symbol,
-      name: meta.shortName || meta.longName || symbol,
-      price: price,
-      yield: yieldVal,
-      yieldDisplay: yieldVal * 100
-    };
+    return { symbol: meta.symbol, name: meta.shortName || meta.longName || symbol, price: price, yield: yieldVal, yieldDisplay: yieldVal * 100 };
   }
   return null;
 };
 
-// --- ANALYST DATA (With Safety Net Fallback) ---
+// --- ANALYST DATA (With Safety Net) ---
 export const fetchAnalystData = async (symbol) => {
   const t = new Date().getTime();
   const richUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile&t=${t}`;
@@ -211,18 +181,15 @@ export const fetchAnalystData = async (symbol) => {
     };
   }
 
-  // Fallback (This is the critical block you asked about)
+  // Fallback (Safety Net)
   const basic = await fetchDividendInfo(symbol);
   if (basic) {
-    return {
-      ...basic,
-      currentPrice: basic.price,
-      dividendYield: basic.yield
-    };
+    return { ...basic, currentPrice: basic.price, dividendYield: basic.yield };
   }
-// --- NEW: OPTIONS CHAIN ---
-// If date is null, returns available expiration dates.
-// If date is provided (unix timestamp), returns calls/puts for that date.
+  return null;
+};
+
+// --- OPTIONS CHAIN (NEW) ---
 export const fetchOptions = async (symbol, date = null) => {
   let url = `https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}`;
   if (date) url += `?date=${date}`;
