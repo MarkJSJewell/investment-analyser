@@ -220,5 +220,29 @@ export const fetchAnalystData = async (symbol) => {
       dividendYield: basic.yield
     };
   }
-  return null;
+// --- NEW: OPTIONS CHAIN ---
+// If date is null, returns available expiration dates.
+// If date is provided (unix timestamp), returns calls/puts for that date.
+export const fetchOptions = async (symbol, date = null) => {
+  let url = `https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}`;
+  if (date) url += `?date=${date}`;
+
+  try {
+    const data = await fetchYahoo(url);
+    if (!data?.optionChain?.result?.[0]) return null;
+    
+    const result = data.optionChain.result[0];
+    const options = result.options[0];
+
+    return {
+      symbol: result.underlyingSymbol,
+      price: result.quote.regularMarketPrice,
+      expirations: result.expirationDates, // Array of timestamps
+      calls: options.calls || [],
+      puts: options.puts || []
+    };
+  } catch (e) {
+    console.warn('Options fetch failed:', e);
+    return null;
+  }
 };
