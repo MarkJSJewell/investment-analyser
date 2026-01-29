@@ -129,7 +129,7 @@ const PortfolioChart = ({ chartData, allSymbols, stocks, theme }) => {
                 type="monotoneX"
                 dataKey={symbol}
                 name={symbol}
-                stroke={colors[index % colors.length]}
+                stroke={getColor(index)} // <--- USE SHARED COLOR
                 strokeWidth={2}
                 dot={false}
                 activeDot={{ r: 6 }}
