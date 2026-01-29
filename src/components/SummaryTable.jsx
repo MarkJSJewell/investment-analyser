@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { formatCurrency, formatPercent, getSymbolColor, getSymbolName } from '../utils/formatters';
+import { formatCurrency, formatPercent, getSymbolName } from '../utils/formatters';
+import { getColor } from '../utils/colors'; // <--- NEW IMPORT
 
 // Helper for Large Numbers (Billions/Trillions)
 const formatLargeNumber = (num) => {
@@ -69,11 +70,11 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
           valueA = dataA.returnPercent;
           valueB = dataB.returnPercent;
           break;
-        case 'aum': // NEW: Sort by AUM
+        case 'aum':
           valueA = analystA?.totalAssets || 0;
           valueB = analystB?.totalAssets || 0;
           break;
-        case 'momentum': // NEW: Sort by Trend
+        case 'momentum':
           valueA = analystA?.currentPrice && analystA?.fiftyDayAverage 
             ? ((analystA.currentPrice - analystA.fiftyDayAverage) / analystA.fiftyDayAverage) : -999;
           valueB = analystB?.currentPrice && analystB?.fiftyDayAverage 
@@ -199,7 +200,6 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
               <SortHeader column="gainLoss">Gain/Loss</SortHeader>
               <SortHeader column="return">Return</SortHeader>
               
-              {/* NEW COLUMNS */}
               <SortHeader column="aum">Total AUM</SortHeader>
               <SortHeader column="momentum">Trend (Hot?)</SortHeader>
               
@@ -212,7 +212,7 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
             </tr>
           </thead>
           <tbody>
-            {sortedSymbols.map(symbol => {
+            {sortedSymbols.map((symbol) => {
               const data = analysis[symbol];
               const analyst = analystData?.[symbol];
               const gainLoss = data.finalValue - data.totalInvested;
@@ -223,19 +223,15 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
                 ? ((analyst.fmvEstimate - analyst.currentPrice) / analyst.currentPrice * 100) 
                 : null;
               
-              // AUM Logic
               const hasAum = analyst?.totalAssets && analyst.totalAssets > 0;
               
-              // Trend/Hotness Logic (Price vs 50d Avg)
               const priceTrend = analyst?.currentPrice && analyst?.fiftyDayAverage 
                 ? ((analyst.currentPrice - analyst.fiftyDayAverage) / analyst.fiftyDayAverage * 100) 
                 : null;
               
-              // Define "Hot" as > 5% above 50d avg, "Cold" as < -5%
               const isHot = priceTrend > 5; 
               const isCold = priceTrend < -5;
 
-              // Format earnings date
               const formatEarningsDate = (dateStr) => {
                 if (!dateStr) return null;
                 const date = new Date(dateStr);
@@ -251,7 +247,14 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
                 <tr key={symbol} style={{ borderBottom: '1px solid #eee' }}>
                   <td style={{ padding: '10px 12px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: getSymbolColor(symbol, stocks), flexShrink: 0 }} />
+                      {/* FIXED COLOR LOGIC: Uses original index to stay consistent with chart */}
+                      <div style={{ 
+                        width: '10px', 
+                        height: '10px', 
+                        borderRadius: '50%', 
+                        background: getColor(allSymbols.indexOf(symbol)), 
+                        flexShrink: 0 
+                      }} />
                       <div>
                         <div style={{ fontWeight: '500' }}>{getSymbolName(symbol)}</div>
                         <div style={{ fontSize: '10px', color: '#666' }}>{symbol}</div>
@@ -282,24 +285,22 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
                     </span>
                   </td>
 
-                  {/* NEW: AUM Column */}
                   <td style={{ textAlign: 'right', padding: '10px 12px', fontWeight: '500', color: hasAum ? text : textMuted }}>
                      {formatLargeNumber(analyst?.totalAssets)}
                   </td>
 
-                  {/* NEW: Trend/Hotness Column */}
                   <td style={{ textAlign: 'right', padding: '10px 12px' }}>
                     {priceTrend !== null ? (
-                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                         <span style={{ 
-                           color: isHot ? '#2E7D32' : (isCold ? '#C62828' : text),
-                           fontWeight: isHot ? 'bold' : 'normal',
-                           fontSize: '12px'
-                         }}>
-                           {isHot ? '🔥 ' : ''}{priceTrend > 0 ? '+' : ''}{priceTrend.toFixed(1)}%
-                         </span>
-                         <span style={{ fontSize: '10px', color: textMuted }}>vs 50d Avg</span>
-                       </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                          <span style={{ 
+                            color: isHot ? '#2E7D32' : (isCold ? '#C62828' : text),
+                            fontWeight: isHot ? 'bold' : 'normal',
+                            fontSize: '12px'
+                          }}>
+                            {isHot ? '🔥 ' : ''}{priceTrend > 0 ? '+' : ''}{priceTrend.toFixed(1)}%
+                          </span>
+                          <span style={{ fontSize: '10px', color: textMuted }}>vs 50d Avg</span>
+                        </div>
                     ) : '-'}
                   </td>
 
