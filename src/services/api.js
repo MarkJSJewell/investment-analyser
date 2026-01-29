@@ -1,10 +1,10 @@
 // PROXY CONFIGURATION
 const VERCEL_PROXY = (url) => `/api/proxy?url=${encodeURIComponent(url)}`;
 
-// Backup Public Proxies
+// Backup Public Proxies (Rotated on failure)
 const PUBLIC_PROXIES = [
-  (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, // New primary backup
+  (url) => `https://corsproxy.io/?${encodeURIComponent(url)}` // Secondary backup
 ];
 
 // Helper: Pause execution (Jitter)
@@ -12,36 +12,52 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Helper: Smart fetcher with robust fallback
 const fetchYahoo = async (yahooUrl, retryCount = 0) => {
-  // 1. Try Vercel Proxy
+  // 1. Try Vercel Proxy (Primary)
   try {
     const res = await fetch(VERCEL_PROXY(yahooUrl));
     if (res.ok) {
       const text = await res.text();
+      // Verify valid JSON
       if (text.trim().startsWith('{')) return JSON.parse(text);
     }
-    // If rate limited (429), wait and try fallback immediately
+    
+    // If rate limited (429), log warning but don't throw yet
     if (res.status === 429) {
-      console.warn(`Rate limit hit for ${yahooUrl}. Switching to fallback...`);
-      // Do NOT recurse to Vercel proxy again, go straight to fallback
+      console.warn(`Rate limit (429) on Vercel Proxy for ${yahooUrl}. Switching to fallbacks...`);
     }
-  } catch (e) { /* Ignore */ }
+  } catch (e) { 
+    console.warn(`Vercel Proxy failed: ${e.message}`);
+  }
 
-  // 2. Try Public Proxies (Fallback)
+  // 2. Try Public Proxies (Fallback Rotation)
   for (const proxyFn of PUBLIC_PROXIES) {
     try {
-      // Add a small jitter to avoid slamming public proxies
-      await wait(1000 + Math.random() * 500); 
+      // Add a small jitter (500ms - 1.5s) to avoid slamming the backup
+      await wait(500 + Math.random() * 1000); 
+      
       const res = await fetch(proxyFn(yahooUrl));
       if (res.ok) {
         const text = await res.text();
         let jsonText = text;
+        
+        // Handle allorigins wrapper (sometimes wraps response in "contents")
         if (text.includes('"contents"')) {
-           try { const wrapper = JSON.parse(text); if (wrapper.contents) jsonText = wrapper.contents; } catch(e) {}
+           try { 
+             const wrapper = JSON.parse(text); 
+             if (wrapper.contents) jsonText = wrapper.contents; 
+           } catch(e) { /* Not a wrapper, use raw text */ }
         }
+
+        // Validate JSON
         if (jsonText.trim().startsWith('{')) return JSON.parse(jsonText);
       }
-    } catch (e) { continue; }
+    } catch (e) { 
+      console.warn(`Fallback proxy failed: ${e.message}`);
+      continue; 
+    }
   }
+  
+  console.error("All proxies failed for URL:", yahooUrl);
   return null;
 };
 
@@ -64,6 +80,7 @@ export const searchSymbol = async (query) => {
 
 export const fetchQuote = async (symbol) => {
   let target = symbol;
+  // If ISIN format, search first
   if (/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(symbol)) {
     const s = await searchSymbol(symbol);
     if (s) target = s.symbol;
@@ -191,7 +208,7 @@ export const fetchAnalystData = async (symbol) => {
   return null;
 };
 
-// --- OPTIONS CHAIN (NEW) ---
+// --- OPTIONS CHAIN ---
 export const fetchOptions = async (symbol, date = null) => {
   let url = `https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}`;
   if (date) url += `?date=${date}`;
