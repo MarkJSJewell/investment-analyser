@@ -19,16 +19,18 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
       const text = await res.text();
       if (text.trim().startsWith('{')) return JSON.parse(text);
     }
-    if (res.status === 429 && retryCount < 1) {
-      await wait(2000);
-      return fetchYahoo(yahooUrl, retryCount + 1);
+    // If rate limited (429), wait and try fallback immediately
+    if (res.status === 429) {
+      console.warn(`Rate limit hit for ${yahooUrl}. Switching to fallback...`);
+      // Do NOT recurse to Vercel proxy again, go straight to fallback
     }
   } catch (e) { /* Ignore */ }
 
   // 2. Try Public Proxies (Fallback)
   for (const proxyFn of PUBLIC_PROXIES) {
     try {
-      await wait(1000); 
+      // Add a small jitter to avoid slamming public proxies
+      await wait(1000 + Math.random() * 500); 
       const res = await fetch(proxyFn(yahooUrl));
       if (res.ok) {
         const text = await res.text();
