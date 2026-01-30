@@ -196,6 +196,9 @@ export const fetchAnalystData = async (symbol) => {
       fiftyTwoWeekChange: keyStats?.['52WeekChange']?.raw,
       ytdReturn: keyStats?.ytdReturn?.raw,
       dividendYield: summary?.dividendYield?.raw || summary?.yield?.raw,
+      // --- NEW: P/E RATIO ---
+      peRatio: summary?.trailingPE?.raw || summary?.forwardPE?.raw,
+      // ----------------------
       earningsDate: result.calendarEvents?.earnings?.earningsDate?.[0]?.raw ? new Date(result.calendarEvents.earnings.earningsDate[0].raw * 1000).toISOString().split('T')[0] : null
     };
   }
