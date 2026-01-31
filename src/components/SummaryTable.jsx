@@ -1,7 +1,6 @@
-import { getColor } from '../utils/colors';
 import React, { useState, useMemo } from 'react';
 import { formatCurrency, formatPercent, getSymbolName } from '../utils/formatters';
-import { getColor } from '../utils/colors';
+import { getColor } from '../utils/colors'; // Import exists exactly ONCE here
 
 // Helper for Large Numbers (Billions/Trillions)
 const formatLargeNumber = (num) => {
@@ -74,7 +73,7 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
           valueA = analystA?.totalAssets || 0;
           valueB = analystB?.totalAssets || 0;
           break;
-        case 'pe': // NEW: Sort by P/E
+        case 'pe':
           valueA = analystA?.peRatio || 0;
           valueB = analystB?.peRatio || 0;
           break;
@@ -318,10 +317,8 @@ const SummaryTable = ({ allSymbols, analysis, stocks, analystData, loadingAnalys
                   {formatPercent(totalReturn)}
                 </span>
               </td>
-              {/* Spacer cells for columns */}
               <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
               <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
-              {/* Spacer for P/E */}
               <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
               <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
               <td style={{ padding: '12px', borderTop: '2px solid #ddd' }}></td>
