@@ -2,29 +2,40 @@
 const VERCEL_PROXY = (url) => `/api/proxy?url=${encodeURIComponent(url)}`;
 
 // Backup Public Proxies (Rotated on failure)
-// 1. CodeTabs (Very robust for Yahoo)
-// 2. AllOrigins (Good backup)
 const PUBLIC_PROXIES = [
   (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
   (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
 ];
 
-// Helper: Pause execution (Jitter)
+// Helper: Pause execution
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Helper: Smart fetcher with robust fallback
+// Helper: Fetch with Timeout (Prevents "Hourglass of Death")
+const fetchWithTimeout = async (url, options = {}) => {
+  const { timeout = 5000 } = options; // 5 seconds max wait
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    throw error;
+  }
+};
+
+// Helper: Smart fetcher with robust fallback & timeouts
 const fetchYahoo = async (yahooUrl, retryCount = 0) => {
   // 1. Try Vercel Proxy (Primary)
   try {
-    const res = await fetch(VERCEL_PROXY(yahooUrl));
+    const res = await fetchWithTimeout(VERCEL_PROXY(yahooUrl));
     
-    // If successful, parse and return
     if (res.ok) {
       const text = await res.text();
       if (text.trim().startsWith('{')) return JSON.parse(text);
     }
     
-    // If rate limited (429), log it and skip straight to fallbacks
     if (res.status === 429) {
       console.warn(`Rate limit (429) on Vercel Proxy for ${yahooUrl}. Switching to fallbacks...`);
     }
@@ -35,23 +46,22 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
   // 2. Try Public Proxies (Fallback Rotation)
   for (const proxyFn of PUBLIC_PROXIES) {
     try {
-      // Vital: Wait 2 seconds before hitting backup to let rate limits cool down
-      await wait(2000 + Math.random() * 1000); 
+      // Wait a random time (1-2s) to let rate limits cool down
+      await wait(1000 + Math.random() * 1000); 
       
-      const res = await fetch(proxyFn(yahooUrl));
+      const res = await fetchWithTimeout(proxyFn(yahooUrl));
       if (res.ok) {
         const text = await res.text();
         let jsonText = text;
         
-        // Handle wrappers (CodeTabs/AllOrigins sometimes wrap response)
+        // Handle proxy wrappers
         try { 
            if (text.includes('"contents"')) {
              const wrapper = JSON.parse(text); 
              if (wrapper.contents) jsonText = wrapper.contents; 
            }
-        } catch(e) { /* Not a wrapper, use raw text */ }
+        } catch(e) { /* use raw text */ }
 
-        // Validate JSON
         if (jsonText.trim().startsWith('{')) return JSON.parse(jsonText);
       }
     } catch (e) { 
@@ -60,7 +70,6 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
     }
   }
   
-  console.error("All proxies failed for URL:", yahooUrl);
   return null;
 };
 
@@ -81,16 +90,43 @@ export const searchSymbol = async (query) => {
   return null;
 };
 
+// OPTIMIZED: Uses Quote API (Lighter) instead of Chart API
 export const fetchQuote = async (symbol) => {
   let target = symbol;
+  
+  // Handle ISIN or weird symbols first
   if (/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(symbol)) {
     const s = await searchSymbol(symbol);
     if (s) target = s.symbol;
   }
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(target)}?interval=1d&range=5d`;
-  const data = await fetchYahoo(url);
-  if (data?.chart?.result?.[0]?.meta) return { valid: true, name: data.chart.result[0].meta.shortName, symbol: target };
-  return { valid: true, name: `${target} (unverified)`, symbol: target };
+
+  // 1. Try Quote API first (Much lighter, less likely to 429)
+  const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(target)}`;
+  const data = await fetchYahoo(quoteUrl);
+
+  if (data?.quoteResponse?.result?.[0]) {
+    const quote = data.quoteResponse.result[0];
+    return { 
+      valid: true, 
+      name: quote.shortName || quote.longName, 
+      symbol: quote.symbol 
+    };
+  }
+
+  // 2. Fallback to Chart API if Quote fails
+  const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(target)}?interval=1d&range=5d`;
+  const chartData = await fetchYahoo(chartUrl);
+  
+  if (chartData?.chart?.result?.[0]?.meta) {
+    return { 
+      valid: true, 
+      name: chartData.chart.result[0].meta.shortName, 
+      symbol: target 
+    };
+  }
+
+  // 3. Absolute Fallback: Assume valid if we couldn't check (avoids blocking user)
+  return { valid: true, name: `${target} (Unverified)`, symbol: target };
 };
 
 export const fetchHistoricalData = async (symbol, start, end) => {
