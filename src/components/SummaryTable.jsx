@@ -1,3 +1,4 @@
+import { getColor } from '../utils/colors';
 import React, { useState, useMemo } from 'react';
 import { formatCurrency, formatPercent, getSymbolName } from '../utils/formatters';
 import { getColor } from '../utils/colors';
