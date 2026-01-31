@@ -1,4 +1,5 @@
 import { INDEX_OPTIONS, COMMODITY_OPTIONS, CRYPTO_OPTIONS, BOND_OPTIONS } from '../constants';
+import { CHART_COLORS } from './colors'; // Import shared colors
 
 // Format currency
 export const formatCurrency = (value) => {
@@ -17,24 +18,42 @@ export const formatPercent = (value) => {
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 };
 
-// Get symbol display name (Keeps your custom mappings)
+// RESTORED: Get symbol color (Uses shared CHART_COLORS now)
+export const getSymbolColor = (symbol, stocks = []) => {
+  // 1. Check Portfolio Stocks
+  const stockIndex = stocks.findIndex(s => s.symbol === symbol);
+  if (stockIndex >= 0) return CHART_COLORS[stockIndex % CHART_COLORS.length];
+  
+  // 2. Check Static Lists (Indexes, Crypto, etc.)
+  const idx = INDEX_OPTIONS.find(i => i.symbol === symbol);
+  if (idx) return idx.color;
+  
+  const crypto = CRYPTO_OPTIONS.find(c => c.symbol === symbol);
+  if (crypto) return crypto.color;
+  
+  const bond = BOND_OPTIONS.find(b => b.symbol === symbol);
+  if (bond) return bond.color;
+  
+  const comm = COMMODITY_OPTIONS.find(c => c.symbol === symbol);
+  if (comm) return comm.color;
+  
+  return '#666'; // Default Fallback
+};
+
+// Get symbol display name
 export const getSymbolName = (symbol) => {
   const idx = INDEX_OPTIONS.find(i => i.symbol === symbol);
   if (idx) return idx.name;
-  
   const crypto = CRYPTO_OPTIONS.find(c => c.symbol === symbol);
   if (crypto) return crypto.name;
-  
   const bond = BOND_OPTIONS.find(b => b.symbol === symbol);
   if (bond) return bond.name;
-  
   const comm = COMMODITY_OPTIONS.find(c => c.symbol === symbol);
   if (comm) return comm.name;
-  
   return symbol;
 };
 
-// --- CHART HELPERS (Preserved for custom axis logic) ---
+// --- CHART HELPERS ---
 
 export const formatYAxis = (value, maxValue) => {
   if (maxValue >= 100000) return `$${(value / 1000).toFixed(0)}k`;
