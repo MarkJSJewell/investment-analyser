@@ -2,10 +2,11 @@
 const VERCEL_PROXY = (url) => `/api/proxy?url=${encodeURIComponent(url)}`;
 
 // Backup Public Proxies (Rotated on failure)
-// corsproxy.io removed (blocking traffic). Added codetabs.
+// 1. CodeTabs (Very robust for Yahoo)
+// 2. AllOrigins (Good backup)
 const PUBLIC_PROXIES = [
-  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}` 
+  (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
 ];
 
 // Helper: Pause execution (Jitter)
@@ -16,13 +17,14 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
   // 1. Try Vercel Proxy (Primary)
   try {
     const res = await fetch(VERCEL_PROXY(yahooUrl));
+    
+    // If successful, parse and return
     if (res.ok) {
       const text = await res.text();
-      // Verify valid JSON (Yahoo sometimes returns HTML on error)
       if (text.trim().startsWith('{')) return JSON.parse(text);
     }
     
-    // If rate limited (429), log warning but don't throw yet
+    // If rate limited (429), log it and skip straight to fallbacks
     if (res.status === 429) {
       console.warn(`Rate limit (429) on Vercel Proxy for ${yahooUrl}. Switching to fallbacks...`);
     }
@@ -33,15 +35,15 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
   // 2. Try Public Proxies (Fallback Rotation)
   for (const proxyFn of PUBLIC_PROXIES) {
     try {
-      // INCREASED DELAY: Wait 1.5s - 2.5s to clear rate limits
-      await wait(1500 + Math.random() * 1000); 
+      // Vital: Wait 2 seconds before hitting backup to let rate limits cool down
+      await wait(2000 + Math.random() * 1000); 
       
       const res = await fetch(proxyFn(yahooUrl));
       if (res.ok) {
         const text = await res.text();
         let jsonText = text;
         
-        // Handle wrappers (some proxies wrap response in "contents")
+        // Handle wrappers (CodeTabs/AllOrigins sometimes wrap response)
         try { 
            if (text.includes('"contents"')) {
              const wrapper = JSON.parse(text); 
@@ -81,7 +83,6 @@ export const searchSymbol = async (query) => {
 
 export const fetchQuote = async (symbol) => {
   let target = symbol;
-  // If ISIN format, search first
   if (/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(symbol)) {
     const s = await searchSymbol(symbol);
     if (s) target = s.symbol;
@@ -115,7 +116,6 @@ export const fetchHistoricalData = async (symbol, start, end) => {
   })).filter(d => d.price != null);
 };
 
-// --- SPARK DATA (For Futures & Top Movers) ---
 export const fetchSparkData = async (symbols, range = '1mo') => {
   const symbolStr = symbols.join(',');
   const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${encodeURIComponent(symbolStr)}&range=${range}&interval=1d`;
@@ -134,7 +134,6 @@ export const fetchSparkData = async (symbols, range = '1mo') => {
   } catch (e) { return null; }
 };
 
-// --- MARKET SCREENER (For "Whole Market" Scanner) ---
 export const fetchScreener = async (scrId = 'day_gainers', count = 25) => {
   const url = `https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=${scrId}&count=${count}`;
   try {
@@ -151,7 +150,6 @@ export const fetchScreener = async (scrId = 'day_gainers', count = 25) => {
   } catch (e) { return null; }
 };
 
-// --- DIVIDEND INFO (Chart Fallback) ---
 export const fetchDividendInfo = async (symbol) => {
   await wait(1500); 
   const end = Math.floor(Date.now() / 1000);
@@ -174,7 +172,6 @@ export const fetchDividendInfo = async (symbol) => {
   return null;
 };
 
-// --- ANALYST DATA (With Safety Net) ---
 export const fetchAnalystData = async (symbol) => {
   const t = new Date().getTime();
   const richUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=recommendationTrend,financialData,summaryDetail,price,calendarEvents,defaultKeyStatistics,fundProfile&t=${t}`;
@@ -210,7 +207,6 @@ export const fetchAnalystData = async (symbol) => {
   return null;
 };
 
-// --- OPTIONS CHAIN ---
 export const fetchOptions = async (symbol, date = null) => {
   let url = `https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}`;
   if (date) url += `?date=${date}`;
