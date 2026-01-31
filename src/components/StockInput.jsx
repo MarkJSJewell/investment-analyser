@@ -1,100 +1,83 @@
 import React from 'react';
-import { STOCK_COLORS } from '../constants';
+import { getColor } from '../utils/colors'; // <--- THIS WAS MISSING
 
-const StockInput = ({ stocks, onUpdate, onRemove, onAdd, onValidate }) => {
+const StockInput = ({ stocks, onUpdate, onRemove, onAdd, onValidate, theme }) => {
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-        <label style={{ fontWeight: '500', color: '#333' }}>Stock Symbols (1-10)</label>
-        <a href="https://finance.yahoo.com" target="_blank" rel="noopener noreferrer" style={{ fontSize: '11px', color: '#1A73E8' }}>
-          🔍 Look up tickers
-        </a>
-      </div>
-      <div style={{ fontSize: '11px', color: '#666', marginBottom: '10px', lineHeight: '1.4' }}>
-        <code style={{ background: '#f5f5f5', padding: '1px 4px', borderRadius: '3px' }}>AAPL</code> US · 
-        <code style={{ background: '#f5f5f5', padding: '1px 4px', borderRadius: '3px', marginLeft: '4px' }}>VOD.L</code> UK · 
-        <code style={{ background: '#f5f5f5', padding: '1px 4px', borderRadius: '3px', marginLeft: '4px' }}>BMW.DE</code> EU
-      </div>
-      
+    <div style={{ marginBottom: '20px' }}>
+      <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', color: theme.textMuted }}>Portfolio Assets</h3>
       {stocks.map((stock, index) => (
-        <div key={index} style={{ marginBottom: '8px' }}>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <div style={{ 
-              width: '4px', 
-              height: '38px', 
-              background: STOCK_COLORS[index], 
-              borderRadius: '2px' 
-            }} />
+        <div key={index} style={{ display: 'flex', gap: '10px', marginBottom: '10px', alignItems: 'center' }}>
+          {/* Color Dot */}
+          <div style={{
+            width: '12px',
+            height: '12px',
+            borderRadius: '50%',
+            background: getColor(index), // <--- Caused crash without import
+            flexShrink: 0
+          }} />
+          
+          <div style={{ position: 'relative', flex: 1 }}>
             <input
               type="text"
               value={stock.symbol}
               onChange={(e) => onUpdate(index, e.target.value)}
               onBlur={() => onValidate(index)}
-              placeholder="e.g., AAPL or VOD.L"
-              className={
-                stock.status === 'valid' ? 'stock-valid' : 
-                stock.status === 'invalid' ? 'stock-invalid' : 
-                stock.status === 'validating' ? 'stock-validating' : ''
-              }
+              placeholder="Symbol (e.g. AAPL)"
               style={{
-                flex: 1,
-                padding: '10px 12px',
-                border: '1px solid #ddd',
+                width: '100%',
+                padding: '10px',
+                paddingRight: '30px',
                 borderRadius: '4px',
-                fontSize: '14px',
+                border: `1px solid ${stock.status === 'invalid' ? '#ef4444' : theme.border}`,
+                background: theme.inputBg,
+                color: theme.text,
                 outline: 'none',
-                transition: 'border-color 0.2s'
+                boxSizing: 'border-box' // Prevents padding from breaking layout
               }}
             />
-            {stocks.length > 1 && (
-              <button 
-                onClick={() => onRemove(index)}
-                style={{ 
-                  background: 'none', 
-                  border: 'none', 
-                  cursor: 'pointer', 
-                  fontSize: '18px', 
-                  color: '#999' 
-                }}
-              >
-                ×
-              </button>
+            {stock.status === 'validating' && (
+              <span style={{ position: 'absolute', right: '10px', top: '10px', fontSize: '12px' }}>⏳</span>
+            )}
+            {stock.status === 'valid' && (
+              <span style={{ position: 'absolute', right: '10px', top: '10px', fontSize: '12px' }}>✅</span>
             )}
           </div>
           
-          {stock.status === 'valid' && stock.name && (
-            <div style={{ fontSize: '11px', color: '#34A853', marginLeft: '12px', marginTop: '2px' }}>
-              ✓ {stock.name}
-            </div>
-          )}
-          {stock.status === 'invalid' && (
-            <div style={{ fontSize: '11px', color: '#EA4335', marginLeft: '12px', marginTop: '2px' }}>
-              ✗ {stock.name}
-            </div>
-          )}
-          {stock.status === 'validating' && (
-            <div style={{ fontSize: '11px', color: '#FBBC04', marginLeft: '12px', marginTop: '2px' }}>
-              Validating...
-            </div>
+          {stocks.length > 1 && (
+            <button
+              onClick={() => onRemove(index)}
+              style={{
+                padding: '10px',
+                background: '#FFEBEE',
+                color: '#C62828',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: 'bold'
+              }}
+            >
+              ✕
+            </button>
           )}
         </div>
       ))}
       
       {stocks.length < 10 && (
-        <button 
+        <button
           onClick={onAdd}
-          style={{ 
-            background: 'none', 
-            border: '1px dashed #ccc', 
-            borderRadius: '4px', 
-            padding: '8px', 
-            width: '100%', 
-            color: '#1A73E8', 
-            cursor: 'pointer', 
-            marginTop: '4px' 
+          style={{
+            marginTop: '5px',
+            padding: '8px 16px',
+            background: 'transparent',
+            border: `1px dashed ${theme.border}`,
+            color: theme.textMuted,
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontSize: '12px',
+            width: '100%'
           }}
         >
-          + Add Another Stock
+          + Add Asset
         </button>
       )}
     </div>
