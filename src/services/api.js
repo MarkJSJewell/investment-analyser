@@ -2,9 +2,10 @@
 const VERCEL_PROXY = (url) => `/api/proxy?url=${encodeURIComponent(url)}`;
 
 // Backup Public Proxies (Rotated on failure)
+// corsproxy.io removed (blocking traffic). Added codetabs.
 const PUBLIC_PROXIES = [
-  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, // New primary backup
-  (url) => `https://corsproxy.io/?${encodeURIComponent(url)}` // Secondary backup
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}` 
 ];
 
 // Helper: Pause execution (Jitter)
@@ -17,7 +18,7 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
     const res = await fetch(VERCEL_PROXY(yahooUrl));
     if (res.ok) {
       const text = await res.text();
-      // Verify valid JSON
+      // Verify valid JSON (Yahoo sometimes returns HTML on error)
       if (text.trim().startsWith('{')) return JSON.parse(text);
     }
     
@@ -32,21 +33,21 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
   // 2. Try Public Proxies (Fallback Rotation)
   for (const proxyFn of PUBLIC_PROXIES) {
     try {
-      // Add a small jitter (500ms - 1.5s) to avoid slamming the backup
-      await wait(500 + Math.random() * 1000); 
+      // INCREASED DELAY: Wait 1.5s - 2.5s to clear rate limits
+      await wait(1500 + Math.random() * 1000); 
       
       const res = await fetch(proxyFn(yahooUrl));
       if (res.ok) {
         const text = await res.text();
         let jsonText = text;
         
-        // Handle allorigins wrapper (sometimes wraps response in "contents")
-        if (text.includes('"contents"')) {
-           try { 
+        // Handle wrappers (some proxies wrap response in "contents")
+        try { 
+           if (text.includes('"contents"')) {
              const wrapper = JSON.parse(text); 
              if (wrapper.contents) jsonText = wrapper.contents; 
-           } catch(e) { /* Not a wrapper, use raw text */ }
-        }
+           }
+        } catch(e) { /* Not a wrapper, use raw text */ }
 
         // Validate JSON
         if (jsonText.trim().startsWith('{')) return JSON.parse(jsonText);
@@ -196,9 +197,7 @@ export const fetchAnalystData = async (symbol) => {
       fiftyTwoWeekChange: keyStats?.['52WeekChange']?.raw,
       ytdReturn: keyStats?.ytdReturn?.raw,
       dividendYield: summary?.dividendYield?.raw || summary?.yield?.raw,
-      // --- NEW: P/E RATIO ---
       peRatio: summary?.trailingPE?.raw || summary?.forwardPE?.raw,
-      // ----------------------
       earningsDate: result.calendarEvents?.earnings?.earningsDate?.[0]?.raw ? new Date(result.calendarEvents.earnings.earningsDate[0].raw * 1000).toISOString().split('T')[0] : null
     };
   }
