@@ -2,9 +2,11 @@
 const VERCEL_PROXY = (url) => `/api/proxy?url=${encodeURIComponent(url)}`;
 
 // Backup Public Proxies
+// 1. AllOrigins (JSON Mode) - Most reliable, bypasses CORS
+// 2. CodeTabs - Good fallback
 const PUBLIC_PROXIES = [
-  (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-  (url) => `https://thingproxy.freeboard.io/fetch/${encodeURIComponent(url)}` // Swapped AllOrigins for ThingProxy (Better CORS)
+  (url) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+  (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
 ];
 
 // Helper: Pause execution
@@ -12,7 +14,7 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Helper: Fetch with Timeout
 const fetchWithTimeout = async (url, options = {}) => {
-  const { timeout = 10000 } = options; // INCREASED TO 10 SECONDS
+  const { timeout = 8000 } = options; 
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
@@ -32,7 +34,9 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
     const res = await fetchWithTimeout(VERCEL_PROXY(yahooUrl));
     if (res.ok) {
       const text = await res.text();
-      if (text.trim().startsWith('{')) return JSON.parse(text);
+      try {
+        if (text.trim().startsWith('{')) return JSON.parse(text);
+      } catch (e) { /* Invalid JSON, try backups */ }
     }
     if (res.status === 429) {
       console.warn(`Rate limit (429) on Vercel Proxy. Switching to fallbacks...`);
@@ -44,23 +48,30 @@ const fetchYahoo = async (yahooUrl, retryCount = 0) => {
   // 2. Try Public Proxies (Fallback Rotation)
   for (const proxyFn of PUBLIC_PROXIES) {
     try {
-      // Random wait (1-3s) to avoid spamming backups
-      await wait(1000 + Math.random() * 2000); 
+      await wait(1000 + Math.random() * 1500); // Random delay
       
       const res = await fetchWithTimeout(proxyFn(yahooUrl));
       if (res.ok) {
         const text = await res.text();
         let jsonText = text;
         
-        // Handle proxy wrappers
-        try { 
-           if (text.includes('"contents"')) {
-             const wrapper = JSON.parse(text); 
-             if (wrapper.contents) jsonText = wrapper.contents; 
+        // SPECIAL HANDLING: AllOrigins returns JSON with a "contents" field
+        try {
+           const wrapper = JSON.parse(text);
+           if (wrapper.contents) {
+             // If contents is a string (double encoded), parse it again
+             if (typeof wrapper.contents === 'string' && wrapper.contents.trim().startsWith('{')) {
+                jsonText = wrapper.contents;
+             } else {
+                // Sometimes it's already an object
+                return wrapper.contents; 
+             }
            }
-        } catch(e) { /* use raw text */ }
+        } catch(e) { /* Not a wrapper, use raw text */ }
 
-        if (jsonText.trim().startsWith('{')) return JSON.parse(jsonText);
+        if (typeof jsonText === 'string' && jsonText.trim().startsWith('{')) {
+           return JSON.parse(jsonText);
+        }
       }
     } catch (e) { 
       console.warn(`Fallback proxy failed: ${e.message}`);
@@ -87,13 +98,10 @@ export const searchSymbol = async (query) => {
   return null;
 };
 
-// --- CRITICAL FIX: SOFT FAIL MODE ---
-// If network fails, we return valid: true so the app doesn't hang.
 export const fetchQuote = async (symbol) => {
   let target = symbol;
   
   try {
-    // 1. Try Quote API (Lighter)
     const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(target)}`;
     const data = await fetchYahoo(quoteUrl);
 
@@ -109,14 +117,9 @@ export const fetchQuote = async (symbol) => {
     console.warn("Quote fetch error (ignoring to prevent UI lock):", e);
   }
 
-  // 2. SOFT FAIL: If we reach here, APIs failed. 
-  // Assume the user is right so they can proceed.
-  console.warn(`Could not verify ${target}, assuming valid to unblock UI.`);
-  return { 
-    valid: true, 
-    name: target, // We don't know the name, so use the ticker
-    symbol: target 
-  };
+  // Soft Fail: Assume valid to unblock UI
+  console.warn(`Could not verify ${target}, assuming valid.`);
+  return { valid: true, name: target, symbol: target };
 };
 
 export const fetchHistoricalData = async (symbol, start, end) => {
@@ -126,7 +129,12 @@ export const fetchHistoricalData = async (symbol, start, end) => {
   
   await wait(500); 
   const data = await fetchYahoo(url);
-  if (!data?.chart?.result?.[0]) throw new Error('No data found (API may be blocked)');
+  
+  // Graceful fail: Return empty array instead of crashing if blocked
+  if (!data?.chart?.result?.[0]) {
+    console.warn(`No chart data for ${symbol} (API blocked or invalid)`);
+    return []; 
+  }
   
   const result = data.chart.result[0];
   const adjClose = result.indicators.adjclose?.[0]?.adjclose || result.indicators.quote[0].close;
@@ -224,7 +232,6 @@ export const fetchAnalystData = async (symbol) => {
     };
   }
 
-  // Fallback (Safety Net)
   const basic = await fetchDividendInfo(symbol);
   if (basic) {
     return { ...basic, currentPrice: basic.price, dividendYield: basic.yield };
