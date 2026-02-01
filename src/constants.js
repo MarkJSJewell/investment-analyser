@@ -47,25 +47,28 @@ export const BOND_OPTIONS = [
 ];
 
 // Commodity options organized by category
+// Switched to ETFs for better historical data reliability and API compatibility
 export const COMMODITY_OPTIONS = [
   // Precious Metals
-  { symbol: 'GC=F', name: 'Gold', color: '#FFD700', category: 'Metals' },
-  { symbol: 'SI=F', name: 'Silver', color: '#A0A0A0', category: 'Metals' },
-  { symbol: 'PL=F', name: 'Platinum', color: '#E5E4E2', category: 'Metals' },
-  { symbol: 'PA=F', name: 'Palladium', color: '#CED0DD', category: 'Metals' },
-  { symbol: 'HG=F', name: 'Copper', color: '#B87333', category: 'Metals' },
+  { symbol: 'GLD', name: 'Gold (ETF)', color: '#FFD700', category: 'Metals' },
+  { symbol: 'SLV', name: 'Silver (ETF)', color: '#A0A0A0', category: 'Metals' },
+  { symbol: 'PPLT', name: 'Platinum (ETF)', color: '#E5E4E2', category: 'Metals' },
+  { symbol: 'PALL', name: 'Palladium (ETF)', color: '#CED0DD', category: 'Metals' },
+  { symbol: 'CPER', name: 'Copper (ETF)', color: '#B87333', category: 'Metals' },
+  
   // Energy
-  { symbol: 'CL=F', name: 'Crude Oil (WTI)', color: '#333333', category: 'Energy' },
-  { symbol: 'BZ=F', name: 'Brent Crude', color: '#4A4A4A', category: 'Energy' },
-  { symbol: 'NG=F', name: 'Natural Gas', color: '#87CEEB', category: 'Energy' },
-  { symbol: 'RB=F', name: 'Gasoline', color: '#DC143C', category: 'Energy' },
+  { symbol: 'USO', name: 'Crude Oil (ETF)', color: '#333333', category: 'Energy' },
+  { symbol: 'BNO', name: 'Brent Crude (ETF)', color: '#4A4A4A', category: 'Energy' },
+  { symbol: 'UNG', name: 'Natural Gas (ETF)', color: '#87CEEB', category: 'Energy' },
+  { symbol: 'UGA', name: 'Gasoline (ETF)', color: '#DC143C', category: 'Energy' },
+  
   // Agriculture
-  { symbol: 'ZC=F', name: 'Corn', color: '#F4D03F', category: 'Agri' },
-  { symbol: 'ZW=F', name: 'Wheat', color: '#D4AC0D', category: 'Agri' },
-  { symbol: 'ZS=F', name: 'Soybeans', color: '#7D6608', category: 'Agri' },
-  { symbol: 'KC=F', name: 'Coffee', color: '#6F4E37', category: 'Agri' },
-  { symbol: 'CC=F', name: 'Cocoa', color: '#3E2723', category: 'Agri' },
-  { symbol: 'SB=F', name: 'Sugar', color: '#FAFAFA', category: 'Agri' },
+  { symbol: 'CORN', name: 'Corn (ETF)', color: '#F4D03F', category: 'Agri' },
+  { symbol: 'WEAT', name: 'Wheat (ETF)', color: '#D4AC0D', category: 'Agri' },
+  { symbol: 'SOYB', name: 'Soybeans (ETF)', color: '#7D6608', category: 'Agri' },
+  { symbol: 'JO', name: 'Coffee (ETF)', color: '#6F4E37', category: 'Agri' },
+  { symbol: 'NIB', name: 'Cocoa (ETF)', color: '#3E2723', category: 'Agri' },
+  { symbol: 'CANE', name: 'Sugar (ETF)', color: '#FAFAFA', category: 'Agri' },
 ];
 
 // Stock colors - distinct from indexes and commodities (10 colors)
