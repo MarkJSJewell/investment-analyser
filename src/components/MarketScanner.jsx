@@ -3,134 +3,93 @@ import { fetchSparkData, fetchScreener } from '../services/api';
 import { formatPercent, formatCurrency } from '../utils/formatters';
 import NewsPanel from './NewsPanel';
 
-// --- STATIC CORE LIST (Always Scan These) ---
-// Includes Major ETFs, Big Tech, and Sector Leaders to ensure stability
+// The "Safety List" of major stocks to always scan in Watchlist mode
 const CORE_WATCHLIST = [
-  // MAJOR ETFs (The Market)
-  'SPY', 'QQQ', 'DIA', 'IWM', 'TLT', 'AGG', 'GLD', 'SLV', 'USO', // Indices/Bonds/Commodities
-  'TQQQ', 'SQQQ', 'SOXL', 'SOXS', 'UVXY', 'ARKK', // Leveraged/Volatility
-  'XLE', 'XLF', 'XLK', 'XLV', 'XLY', 'XLP', // Sectors
-  'SMH', 'TAN', 'JETS', 'PEJ', // Industry Specific
-
-  // MAGNIFICENT 7 & MEGA CAP
-  'AAPL', 'MSFT', 'GOOG', 'AMZN', 'NVDA', 'TSLA', 'META', 'NFLX', 'BRK-B', 'LLY', 'AVGO',
-
-  // POPULAR / VOLATILE (Retail Favorites)
-  'AMD', 'INTC', 'PLTR', 'COIN', 'MSTR', 'HOOD', 'SOFI', 'DKNG', 'LCID', 'RIVN', 'NIO',
-  'GME', 'AMC', 'ROKU', 'U', 'RBLX', 'PATH', 'AI', 'CVNA', 'UPST', 'AFRM', 'MARA', 'RIOT'
+  'AAPL', 'MSFT', 'GOOG', 'AMZN', 'NVDA', 'TSLA', 'META', 'AMD', 'INTC', 'NFLX', 
+  'SPY', 'QQQ', 'IWM', 'DIA', 'PLTR', 'COIN', 'MSTR', 'HOOD', 'SOFI', 'DKNG',
+  'LCID', 'RIVN', 'NIO', 'GME', 'AMC', 'ROKU', 'U', 'RBLX', 'PATH', 'AI'
 ];
 
-// Helper to split array into chunks (avoids API limits)
-const chunkArray = (arr, size) => {
-  const chunks = [];
-  for (let i = 0; i < arr.length; i += size) {
-    chunks.push(arr.slice(i, i + size));
-  }
-  return chunks;
-};
+// Yahoo's Pre-defined Screener IDs
+const MARKET_SCREENS = [
+  { id: 'day_gainers', label: '🚀 Top Gainers', desc: 'Highest % change today' },
+  { id: 'day_losers', label: '🔻 Top Losers', desc: 'Lowest % change today' },
+  { id: 'most_actives', label: '🔥 Most Active', desc: 'Highest trading volume' },
+  { id: 'undervalued_growth_stocks', label: '💎 Undervalued Growth', desc: 'Low PE with high growth' },
+  { id: 'tech_stocks', label: '💻 Technology', desc: 'Tech sector leaders' },
+  { id: 'growth_technology_stocks', label: '📈 High Growth Tech', desc: 'Fastest growing tech' },
+  { id: 'aggressive_small_caps', label: '⚡ Small Caps', desc: 'High volatility small caps' },
+  { id: 'undervalued_large_caps', label: 'bm Blue Chips', desc: 'Stable, undervalued giants' }
+];
 
 const MarketScanner = ({ theme, userStocks }) => {
-  const [days, setDays] = useState(7);
-  const [threshold, setThreshold] = useState(5); // % Growth
-  const [limit, setLimit] = useState(20);
+  const [scanType, setScanType] = useState('market'); // 'list' or 'market'
+  const [activeScreen, setActiveScreen] = useState('day_gainers'); // Default screen
+  const [days, setDays] = useState(5);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState('');
-  const [selectedStock, setSelectedStock] = useState(null); 
+  const [selectedStock, setSelectedStock] = useState(null);
+
+  // Auto-run when switching screens
+  useEffect(() => {
+    if (scanType === 'market') runScan();
+  }, [activeScreen, scanType]);
 
   const runScan = async () => {
     setLoading(true);
     setResults([]);
     setSelectedStock(null);
-    setProgress('Fetching active market movers...');
 
     try {
-      // 1. DYNAMIC FETCH: Get the top 100 "Most Active" stocks right now
-      // This catches whatever is hot TODAY (e.g. LCID, earnings winners, news breakouts)
-      let dynamicSymbols = [];
-      try {
-        const activeStocks = await fetchScreener('most_actives', 100);
-        if (activeStocks) {
-          dynamicSymbols = activeStocks.map(s => s.symbol);
+      if (scanType === 'market') {
+        // --- 1. MARKET SCAN (Using Yahoo Presets) ---
+        // This scans the ENTIRE market (10,000+ stocks) using Yahoo's engine
+        const data = await fetchScreener(activeScreen, 50);
+        if (data) {
+          setResults(data.map(item => ({
+            symbol: item.symbol,
+            name: item.name,
+            currentPrice: item.price,
+            growth: item.changePercent * 100, // Screener returns decimal (0.05 = 5%)
+            volume: item.volume
+          })));
+          if(data.length > 0) setSelectedStock(data[0].symbol);
         }
-      } catch (e) {
-        console.warn('Could not fetch active stocks, falling back to static list.');
-      }
 
-      // 2. COMBINE: User Watchlist + Core Static List + Dynamic Active List
-      const userSymbols = userStocks.map(s => s.symbol).filter(s => s);
-      const uniqueSymbols = [...new Set([
-        ...userSymbols,
-        ...CORE_WATCHLIST,
-        ...dynamicSymbols
-      ])];
-
-      console.log(`Scanning ${uniqueSymbols.length} total symbols...`);
-      setProgress(`Scanning ${uniqueSymbols.length} assets (Static + Active)...`);
-
-      // 3. DETERMINE RANGE for Spark API
-      // If user wants 5 days, we fetch '1mo' to be safe and slice locally.
-      // 1mo covers up to ~30 days, 3mo covers up to ~90 days.
-      const range = days <= 5 ? '1mo' : (days <= 25 ? '3mo' : '6mo');
-
-      // 4. BATCH REQUESTS (Chunks of 20 to prevent 429 errors)
-      const chunks = chunkArray(uniqueSymbols, 20);
-      let allBatchData = [];
-
-      for (let i = 0; i < chunks.length; i++) {
-        // Update progress bar
-        setProgress(`Analyzing batch ${i + 1} of ${chunks.length}...`);
+      } else {
+        // --- 2. WATCHLIST SCAN (Custom Sparkline) ---
+        // Scans ONLY your specific list but calculates exact X-day growth
+        const userSymbols = userStocks.map(s => s.symbol).filter(s => s);
+        const uniqueSymbols = [...new Set([...CORE_WATCHLIST, ...userSymbols])];
         
-        // Fetch chunk
-        const chunkData = await fetchSparkData(chunks[i], range);
-        if (chunkData) {
-          allBatchData = [...allBatchData, ...chunkData];
+        const data = await fetchSparkData(uniqueSymbols, days <= 5 ? '5d' : '1mo');
+        
+        if (data) {
+          const processed = data.map(item => {
+            const history = item.history;
+            if (!history || history.length < 2) return null;
+            
+            const current = history[history.length - 1].price;
+            const startIdx = Math.max(0, history.length - 1 - days);
+            const start = history[startIdx].price;
+            const growth = ((current - start) / start) * 100;
+
+            return {
+              symbol: item.symbol,
+              name: item.name,
+              currentPrice: current,
+              growth
+            };
+          }).filter(item => item !== null)
+            .sort((a, b) => b.growth - a.growth)
+            .slice(0, 50);
+
+          setResults(processed);
+          if(processed.length > 0) setSelectedStock(processed[0].symbol);
         }
-        
-        // Tiny delay between chunks to be polite to the API
-        await new Promise(r => setTimeout(r, 200));
       }
-
-      if (allBatchData.length === 0) throw new Error('Failed to fetch market data');
-
-      // 5. PROCESS & FILTER
-      const processed = allBatchData.map(item => {
-        const history = item.history;
-        if (!history || history.length < 2) return null;
-
-        const current = history[history.length - 1];
-        
-        // Find price N days ago
-        // We look backwards from the end
-        // e.g. if we have 30 days of data and want 5 day growth:
-        // index = length - 1 - 5
-        const lookbackIndex = Math.max(0, history.length - 1 - days);
-        const start = history[lookbackIndex];
-        
-        if (!start || !current) return null;
-
-        const growth = ((current.price - start.price) / start.price) * 100;
-
-        return {
-          symbol: item.symbol,
-          name: item.name,
-          startPrice: start.price,
-          currentPrice: current.price,
-          startDate: start.date,
-          growth
-        };
-      }).filter(item => item && item.growth >= threshold);
-
-      // 6. SORT & LIMIT
-      const topMovers = processed.sort((a, b) => b.growth - a.growth).slice(0, limit);
-      
-      setResults(topMovers);
-      if (topMovers.length > 0) setSelectedStock(topMovers[0].symbol);
-      setProgress('');
-
     } catch (e) {
       console.error(e);
-      setProgress('Scan failed. Please try again.');
     }
     setLoading(false);
   };
@@ -138,39 +97,67 @@ const MarketScanner = ({ theme, userStocks }) => {
   return (
     <div style={{ padding: '20px', background: theme.bg, minHeight: '80vh', display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px' }}>
       
-      {/* LEFT COLUMN: Controls & Results */}
+      {/* LEFT: Controls & Results */}
       <div>
-        {/* Controls */}
         <div style={{ background: theme.cardBg, padding: '20px', borderRadius: '12px', border: `1px solid ${theme.border}`, marginBottom: '20px' }}>
-          <h3 style={{ margin: '0 0 15px 0' }}>🚀 Dynamic Market Scanner</h3>
           
-          <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'end' }}>
-            <div style={{ flex: 1 }}>
-              <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: theme.textMuted }}>Timeframe (Days)</label>
-              <input type="number" min="1" max="60" value={days} onChange={e => setDays(Number(e.target.value))} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.text }} />
+          {/* Header & Mode Switch */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <h3 style={{ margin: 0 }}>📡 Market Scanner</h3>
+            <div style={{ display: 'flex', gap: '10px', background: theme.bg, padding: '4px', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+               <button onClick={() => setScanType('market')} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: scanType === 'market' ? theme.cardBg : 'transparent', color: theme.text, cursor: 'pointer', fontWeight: '600', boxShadow: scanType === 'market' ? '0 2px 4px rgba(0,0,0,0.1)' : 'none' }}>🌍 Whole Market</button>
+               <button onClick={() => setScanType('list')} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: scanType === 'list' ? theme.cardBg : 'transparent', color: theme.text, cursor: 'pointer', fontWeight: '600', boxShadow: scanType === 'list' ? '0 2px 4px rgba(0,0,0,0.1)' : 'none' }}>📋 My Watchlist</button>
             </div>
-
-            <div style={{ flex: 1 }}>
-              <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: theme.textMuted }}>Min Growth (%)</label>
-              <input type="number" value={threshold} onChange={e => setThreshold(Number(e.target.value))} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.text }} />
-            </div>
-
-            <div style={{ flex: 1 }}>
-              <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: theme.textMuted }}>Limit Results</label>
-              <input type="number" min="1" max="50" value={limit} onChange={e => setLimit(Number(e.target.value))} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.text }} />
-            </div>
-
-            <button onClick={runScan} disabled={loading} style={{ padding: '10px 24px', background: theme.primary, color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-              {loading ? 'Scanning...' : 'Start Scan'}
-            </button>
           </div>
 
-          <div style={{ marginTop: '10px', fontSize: '12px', color: theme.textMuted }}>
-            {progress || 'Scans Top 100 Active Stocks + 60 Major ETFs & Blue Chips + Your Watchlist'}
+          {/* Mode Specific Controls */}
+          <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
+            
+            {scanType === 'market' ? (
+              // MARKET MODE: Preset Buttons
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', flex: 1 }}>
+                {MARKET_SCREENS.map(screen => (
+                  <button
+                    key={screen.id}
+                    onClick={() => setActiveScreen(screen.id)}
+                    title={screen.desc}
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: '12px',
+                      borderRadius: '20px',
+                      border: `1px solid ${activeScreen === screen.id ? theme.primary : theme.border}`,
+                      background: activeScreen === screen.id ? '#E8F0FE' : 'transparent',
+                      color: activeScreen === screen.id ? theme.primary : theme.textMuted,
+                      cursor: 'pointer',
+                      fontWeight: activeScreen === screen.id ? '600' : 'normal'
+                    }}
+                  >
+                    {screen.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              // WATCHLIST MODE: Day Input
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                <span style={{ fontSize: '14px', color: theme.textMuted }}>Find best performers over last</span>
+                <input 
+                  type="number" 
+                  min="1" 
+                  max="30" 
+                  value={days} 
+                  onChange={e => setDays(Number(e.target.value))} 
+                  style={{ width: '60px', padding: '8px', borderRadius: '4px', border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.text, textAlign: 'center' }} 
+                />
+                <span style={{ fontSize: '14px', color: theme.textMuted }}>days</span>
+                <button onClick={runScan} disabled={loading} style={{ marginLeft: 'auto', padding: '10px 24px', background: theme.primary, color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                  {loading ? 'Scanning...' : 'Run Scan'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Results Table */}
+        {/* Results List */}
         {results.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {results.map((item, index) => (
@@ -178,36 +165,43 @@ const MarketScanner = ({ theme, userStocks }) => {
                 key={item.symbol} 
                 onClick={() => setSelectedStock(item.symbol)}
                 style={{ 
-                  background: theme.cardBg, padding: '15px', borderRadius: '8px', border: `1px solid ${selectedStock === item.symbol ? theme.primary : theme.border}`,
+                  background: theme.cardBg, padding: '15px', borderRadius: '8px', 
+                  border: `1px solid ${selectedStock === item.symbol ? theme.primary : theme.border}`,
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer',
                   boxShadow: selectedStock === item.symbol ? '0 0 0 2px rgba(26, 115, 232, 0.2)' : 'none'
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                  <div style={{ background: '#E8F5E9', color: '#166534', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                  <div style={{ 
+                    background: item.growth >= 0 ? '#E8F5E9' : '#FFEBEE', 
+                    color: item.growth >= 0 ? '#166534' : '#C62828', 
+                    width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '12px' 
+                  }}>
                     {index + 1}
                   </div>
                   <div>
                     <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{item.symbol}</div>
-                    <div style={{ fontSize: '12px', color: theme.textMuted }}>{item.name}</div>
+                    <div style={{ fontSize: '12px', color: theme.textMuted, maxWidth: '250px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</div>
                   </div>
                 </div>
 
                 <div style={{ textAlign: 'right' }}>
-                   <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#166534' }}>+{formatPercent(item.growth)}</div>
+                   <div style={{ fontSize: '16px', fontWeight: 'bold', color: item.growth >= 0 ? '#166534' : '#C62828' }}>
+                     {item.growth > 0 ? '+' : ''}{formatPercent(item.growth)}
+                   </div>
                    <div style={{ fontSize: '12px', color: theme.textMuted }}>
-                     {formatCurrency(item.startPrice)} ➜ {formatCurrency(item.currentPrice)} ({days}d)
+                     {formatCurrency(item.currentPrice)}
                    </div>
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          !loading && <div style={{ textAlign: 'center', padding: '40px', color: theme.textMuted }}>No stocks found matching your criteria. Try lowering the threshold or increasing the days.</div>
+          !loading && <div style={{ textAlign: 'center', padding: '40px', color: theme.textMuted }}>{scanType === 'market' ? 'Loading market data...' : 'No results found.'}</div>
         )}
       </div>
 
-      {/* RIGHT COLUMN: News */}
+      {/* RIGHT: News */}
       <div>
         {selectedStock ? (
           <div style={{ position: 'sticky', top: '20px' }}>
@@ -216,11 +210,10 @@ const MarketScanner = ({ theme, userStocks }) => {
           </div>
         ) : (
           <div style={{ padding: '20px', border: `1px dashed ${theme.border}`, borderRadius: '8px', textAlign: 'center', color: theme.textMuted }}>
-            Click a stock to see news
+            Select a stock to see news
           </div>
         )}
       </div>
-
     </div>
   );
 };
